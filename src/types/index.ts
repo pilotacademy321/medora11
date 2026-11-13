@@ -1,0 +1,1161 @@
+export type Language = 'ar' | 'en';
+
+export type UserRole =
+  | 'doctor'
+  | 'radiology_center'
+  | 'laboratory'
+  | 'pharmacy'
+  | 'wholesaler'
+  | 'patient'
+  | 'super_admin'
+  | 'secretary';
+
+export type AccountStatus =
+  | 'incomplete'
+  | 'pending'
+  | 'approved'
+  | 'rejected'
+  | 'suspended';
+
+export interface UserProfile {
+  uid: string;
+  email: string;
+  displayName: string;
+  role: UserRole;
+  status: AccountStatus;
+  accountId?: string;
+  medicalId?: string;
+  licenseNumber?: string;
+  facilityName?: string;
+  governorate?: string;
+  phone?: string;
+  gender?: 'male' | 'female';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ConfirmationMode = 'manual' | 'automatic';
+
+export interface AccountIdentifierRecord {
+  accountId: string; // The primary document ID in 'account_ids' collection: e.g. "M737-DOC-7A8B9C"
+  uid: string;
+  role: UserRole;
+  displayName: string;
+  facilityName?: string;
+  email?: string;
+  phone?: string;
+  governorate?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type PortalId = 
+  | 'patient'
+  | 'doctor'
+  | 'pharmacy'
+  | 'laboratory'
+  | 'radiology'
+  | 'wholesaler'
+  | 'secretary'
+  | 'super_admin';
+
+export interface PortalInfo {
+  id: PortalId;
+  role: UserRole;
+  order: number;
+  titleAr: string;
+  titleEn: string;
+  subtitleAr: string;
+  subtitleEn: string;
+  descAr: string;
+  descEn: string;
+  accentColor: string;
+  bgLight: string;
+  borderColor: string;
+  iconName: 'doctor' | 'radiology' | 'laboratory' | 'pharmacy' | 'wholesaler' | 'patient' | 'super_admin' | 'secretary';
+  plannedModulesAr: string[];
+  plannedModulesEn: string[];
+}
+
+export type AppointmentStatus = 
+  | 'pending' 
+  | 'confirmed' 
+  | 'rescheduled' 
+  | 'completed' 
+  | 'cancelled';
+
+export interface DoctorProfile {
+  doctorId: string;
+  fullName: string;
+  photoURL?: string;
+  specialty: string;
+  subspecialty?: string;
+  qualifications: string;
+  experienceYears?: number;
+  clinicAddress: string;
+  governorate: string;
+  phone: string;
+  whatsapp?: string;
+  consultationFee: number;
+  workingDays: string[];
+  workingHours: string;
+  openingHour?: string;
+  closingHour?: string;
+  slotDurationMinutes?: number;
+  slotsPerHour?: number;
+  maxDailyCapacity?: number;
+  breakStart?: string;
+  breakEnd?: string;
+  confirmationMode?: ConfirmationMode;
+  closedDates?: string[];
+  mapsUrl?: string;
+  bio?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Appointment {
+  id: string;
+  doctorId: string;
+  patientId: string;
+  patientName: string;
+  patientPhone: string;
+  doctorName: string;
+  specialty: string;
+  date: string;
+  timeSlot: string;
+  status: AppointmentStatus;
+  rescheduleReason?: string;
+  rescheduleProposedDate?: string;
+  consultationType?: 'in_person' | 'followup' | 'urgent';
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type MedicalRecordType = 
+  | 'lab_result' 
+  | 'radiology_report' 
+  | 'prescription' 
+  | 'clinical_note' 
+  | 'diagnostic_summary';
+
+export interface MedicalRecord {
+  id: string;
+  patientId: string;
+  patientName: string;
+  doctorId: string;
+  recordType: MedicalRecordType;
+  subCategory?: string;
+  imagingModality?: string;
+  title: string;
+  details: string;
+  sourceFacility?: string;
+  fileUrl?: string;
+  fileName?: string;
+  mimeType?: string;
+  isAuthorizedDocument?: boolean;
+  doctorNotes?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// -------------------------------------------------------------
+// UNIFIED PRIVATE ROLE-SCOPED MESSAGING
+// -------------------------------------------------------------
+export type ConversationRelationshipType =
+  | 'doctor_patient'
+  | 'lab_patient'
+  | 'radiology_patient'
+  | 'pharmacy_customer'
+  | 'wholesaler_pharmacy'
+  | 'admin_support';
+
+export interface ConversationParticipantInfo {
+  uid: string;
+  role: UserRole;
+  name: string;
+  accountId?: string;
+  specialtyOrFacility?: string;
+}
+
+export interface Conversation {
+  id: string;
+  participantIds: string[];
+  participants: Record<string, ConversationParticipantInfo>;
+  relationshipType: ConversationRelationshipType;
+  relationshipRefId?: string;
+  unreadCounts: Record<string, number>;
+  // Backward-compatible optional doctor-patient fields
+  patientId?: string;
+  patientName?: string;
+  patientMedicalId?: string;
+  doctorId?: string;
+  doctorName?: string;
+  doctorSpecialty?: string;
+  lastMessageText: string;
+  lastMessageTimestamp: string;
+  lastSenderUid: string;
+  unreadByDoctor?: number;
+  unreadByPatient?: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ChatMessage {
+  id: string;
+  conversationId: string;
+  senderId: string;
+  senderName: string;
+  senderRole: UserRole;
+  text: string;
+  attachmentUrl?: string;
+  attachmentName?: string;
+  attachmentType?: string;
+  timestamp: string;
+  read: boolean;
+}
+
+// -------------------------------------------------------------
+// PATIENT-CONTROLLED MEDICAL RECORD SHARING
+// -------------------------------------------------------------
+export interface RecordSharingPermission {
+  id: string;
+  patientId: string;
+  patientMedicalId: string;
+  patientName: string;
+  targetDoctorId: string;
+  targetDoctorName: string;
+  targetDoctorSpecialty?: string;
+  recordTypes: Array<'all' | 'lab_result' | 'radiology_report' | 'prescription' | 'clinical_note'>;
+  expiresAt: string; // ISO date string or 'never'
+  status: 'active' | 'revoked';
+  createdAt: string;
+  revokedAt?: string;
+}
+
+// -------------------------------------------------------------
+// BATCH 2: ELECTRONIC PRESCRIPTIONS, LAB & RADIOLOGY REFERRALS
+// -------------------------------------------------------------
+
+export type PrescriptionStatus = 
+  | 'draft' 
+  | 'sent' 
+  | 'received' 
+  | 'accepted' 
+  | 'rejected' 
+  | 'dispensing' 
+  | 'dispensed' 
+  | 'cancelled';
+
+export interface PrescriptionMedicineItem {
+  medicineId?: string;
+  name?: string;
+  medicineName?: string;
+  activeIngredient?: string;
+  strength: string;
+  dosageForm: string;
+  packageSize?: string;
+  dosage: string; // e.g. "حبة واحدة" / "1 tablet"
+  frequency: string; // e.g. "مرتين يومياً بعد الطعام" / "Twice daily after meals"
+  duration: string; // e.g. "5 أيام" / "5 days"
+  quantity?: number | string; // e.g. 1 or "علبة واحدة"
+  instructions?: string; // e.g. "مع كوب ماء كامل"
+  warnings?: string; // e.g. "يمنع القيادة بعد الاستخدام"
+}
+
+export interface ElectronicPrescription {
+  id: string;
+  prescriptionNumber: string; // RX-YYYYMMDD-XXXX
+  doctorId: string;
+  doctorName: string;
+  doctorSpecialty?: string;
+  doctorLicense?: string;
+  doctorLicenseNumber?: string;
+  doctorPhone?: string;
+  clinicName?: string;
+  clinicAddress?: string;
+  patientId: string;
+  patientName: string;
+  patientPhone?: string;
+  patientGender?: 'male' | 'female';
+  patientAgeOrDob?: string;
+  patientAge?: number | string;
+  appointmentId?: string;
+  diagnosis?: string;
+  targetPharmacyId?: string;
+  targetPharmacyName?: string;
+  items: PrescriptionMedicineItem[];
+  medicines?: PrescriptionMedicineItem[];
+  patientAllergies?: string[];
+  generalInstructions?: string;
+  doctorNotes?: string;
+  status: PrescriptionStatus;
+  rejectionReason?: string;
+  cancellationReason?: string;
+  // Dispensing metadata
+  dispensedAt?: string;
+  dispensedByUid?: string;
+  dispensedByName?: string;
+  dispensedPharmacyId?: string;
+  dispensedPharmacyName?: string;
+  dispensingNotes?: string;
+  // Authorized clinical corrections history
+  corrections?: Array<{
+    correctedAt: string;
+    correctedBy: string;
+    reason: string;
+    previousItemsSnapshot: PrescriptionMedicineItem[];
+  }>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type LabOrderStatus = 
+  | 'new' 
+  | 'received' 
+  | 'scheduled'
+  | 'in_progress' 
+  | 'completed' 
+  | 'rejected' 
+  | 'cancelled';
+
+export interface LabOrderItem {
+  testId?: string;
+  testName: string;
+  category?: string;
+  instructions?: string;
+  sampleType?: string;
+}
+
+export interface LabOrder {
+  id: string;
+  orderNumber: string; // LAB-ORD-XXXX
+  doctorId: string;
+  doctorName: string;
+  doctorSpecialty?: string;
+  doctorPhone?: string;
+  clinicName?: string;
+  patientId: string;
+  patientName: string;
+  patientPhone?: string;
+  targetLabId?: string;
+  targetLabName?: string;
+  tests: LabOrderItem[];
+  priority: 'normal' | 'urgent';
+  clinicalIndication?: string;
+  preparationInstructions?: string;
+  fastingInstructions?: string;
+  status: LabOrderStatus;
+  scheduledDate?: string;
+  scheduledAt?: string;
+  rejectionReason?: string;
+  resultId?: string;
+  resultSummary?: string;
+  completedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type RadiologyOrderStatus = 
+  | 'new' 
+  | 'received' 
+  | 'scheduled'
+  | 'in_progress' 
+  | 'completed' 
+  | 'rejected' 
+  | 'cancelled';
+
+export interface RadiologyOrder {
+  id: string;
+  orderNumber: string; // RAD-ORD-XXXX
+  doctorId: string;
+  doctorName: string;
+  doctorSpecialty?: string;
+  doctorPhone?: string;
+  clinicName?: string;
+  patientId: string;
+  patientName: string;
+  patientPhone?: string;
+  targetCenterId?: string;
+  targetCenterName?: string;
+  modality: RadiologyModality;
+  bodyRegion: string; // e.g. "Chest", "Brain", "Abdomen", "Knee"
+  bodyPart?: string;
+  procedureName?: string;
+  priority: 'normal' | 'urgent';
+  clinicalIndication: string;
+  preparationInstructions?: string;
+  status: RadiologyOrderStatus;
+  scheduledDate?: string;
+  scheduledAt?: string;
+  rejectionReason?: string;
+  reportId?: string;
+  reportSummary?: string;
+  completedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SecretaryDelegation {
+  id: string;
+  doctorId: string;
+  doctorName: string;
+  secretaryEmail: string;
+  secretaryName: string;
+  secretaryUid?: string;
+  secretaryPhone?: string;
+  permissions: string[];
+  status: 'active' | 'revoked' | 'pending';
+  acceptedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SecretaryAssignment {
+  id: string; // secretaryUid
+  secretaryUid: string;
+  secretaryEmail: string;
+  secretaryName: string;
+  secretaryPhone?: string;
+  doctorId: string;
+  doctorName: string;
+  doctorSpecialty?: string;
+  clinicAddress?: string;
+  clinicPhone?: string;
+  permissions: string[];
+  status: 'active' | 'revoked';
+  delegationId?: string;
+  assignedAt: string;
+  updatedAt: string;
+  lastActiveAt?: string;
+}
+
+export interface ClinicAuditLog {
+  id: string;
+  doctorId: string;
+  doctorName: string;
+  actorUid: string;
+  actorName: string;
+  actorRole: 'secretary' | 'doctor' | 'admin';
+  action: 'confirm_appointment' | 'reject_appointment' | 'reschedule_appointment' | 'cancel_appointment' | 'create_walkin' | 'checkin_patient' | 'complete_appointment';
+  appointmentId?: string;
+  patientName?: string;
+  details: string;
+  timestamp: string;
+}
+
+export type RadiologyModality = 
+  | 'ultrasound' 
+  | 'xray' 
+  | 'ct' 
+  | 'mri' 
+  | 'doppler' 
+  | 'mammogram';
+
+export type RadiologyBookingStatus = 
+  | 'pending' 
+  | 'accepted' 
+  | 'rescheduled' 
+  | 'rejected' 
+  | 'completed' 
+  | 'cancelled';
+
+export interface RadiologyProfile {
+  centerId: string;
+  centerName: string;
+  logoUrl?: string;
+  directorName?: string;
+  licenseNumber: string;
+  address: string;
+  governorate: string;
+  phone: string;
+  whatsapp?: string;
+  workingHours: string;
+  equipmentList: string[];
+  mapsUrl?: string;
+  bio?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RadiologyService {
+  id: string;
+  centerId: string;
+  name: string;
+  modality: RadiologyModality;
+  price: number;
+  preparationInstructions?: string;
+  estimatedReportHours: number;
+  isAvailable: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RadiologyBooking {
+  id: string;
+  centerId: string;
+  centerName: string;
+  patientId: string;
+  patientName: string;
+  patientPhone: string;
+  serviceId: string;
+  serviceName: string;
+  modality: RadiologyModality;
+  date: string;
+  timeSlot: string;
+  status: RadiologyBookingStatus;
+  rescheduleDate?: string;
+  rescheduleReason?: string;
+  cancellationReason?: string;
+  notes?: string;
+  reportReady?: boolean;
+  reportId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RadiologyReport {
+  id: string;
+  centerId: string;
+  centerName: string;
+  patientId: string;
+  patientName: string;
+  patientPhone?: string;
+  bookingId?: string;
+  serviceName: string;
+  modality: RadiologyModality;
+  bodyPart?: string;
+  clinicalIndication?: string;
+  technique?: string;
+  findings: string;
+  impression: string;
+  recommendations?: string;
+  radiologistName: string;
+  radiologistLicense?: string;
+  fileUrl?: string;
+  reportUrl?: string;
+  scanImages?: string[];
+  dicomFiles?: Array<{
+    id: string;
+    name: string;
+    size: number;
+    sizeFormatted: string;
+    modality: string;
+    storagePath: string;
+    downloadUrl: string;
+    mimeType: string;
+    uploadedAt: string;
+    uploadedBy: string;
+    patientName?: string;
+    bookingId?: string;
+    isDicom: boolean;
+  }>;
+  reviewStatus?: string;
+  status: 'draft' | 'published' | 'ready';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PatientNotification {
+  id: string;
+  recipientUid: string;
+  title: string;
+  message: string;
+  type: 'booking_update' | 'report_ready' | 'general';
+  read: boolean;
+  createdAt: string;
+}
+
+export type LabSampleStatus = 
+  | 'pending_collection' 
+  | 'collected' 
+  | 'received' 
+  | 'processing' 
+  | 'completed' 
+  | 'cancelled';
+
+export type LabBookingStatus = 
+  | 'pending' 
+  | 'accepted' 
+  | 'rescheduled' 
+  | 'rejected' 
+  | 'completed' 
+  | 'cancelled';
+
+export interface LabProfile {
+  labId: string;
+  labName: string;
+  logoUrl?: string;
+  directorName: string;
+  licenseNumber: string;
+  phone: string;
+  whatsapp?: string;
+  address: string;
+  governorate: string;
+  mapsUrl?: string;
+  workingHours: string;
+  equipmentList: string[];
+  homeCollectionAvailable: boolean;
+  homeCollectionFee?: number;
+  bio?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LabTest {
+  id: string;
+  labId: string;
+  labName?: string;
+  name: string;
+  category: string;
+  price: number;
+  estimatedHours: number;
+  turnaroundHours?: number;
+  sampleType: string;
+  fastingInstructions: string;
+  fastingRequired?: boolean;
+  preparationInstructions?: string;
+  normalRange?: string;
+  isAvailable: boolean;
+  homeCollectionSupported: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LabBooking {
+  id: string;
+  labId: string;
+  labName: string;
+  patientId: string;
+  patientName: string;
+  patientPhone: string;
+  testId: string;
+  testName: string;
+  category: string;
+  date: string;
+  timeSlot: string;
+  bookingType: 'in_lab' | 'home_collection';
+  homeAddress?: string;
+  status: LabBookingStatus;
+  sampleStatus: LabSampleStatus;
+  sampleBarcode?: string;
+  rescheduleDate?: string;
+  rescheduleReason?: string;
+  cancellationReason?: string;
+  notes?: string;
+  resultReady?: boolean;
+  resultId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LabResultParameter {
+  name: string;
+  value: string;
+  unit: string;
+  referenceRange: string;
+  status: 'normal' | 'high' | 'low' | 'abnormal';
+}
+
+export interface LabResult {
+  id: string;
+  labId: string;
+  labName: string;
+  patientId: string;
+  patientName: string;
+  bookingId?: string;
+  testName: string;
+  category: string;
+  sampleType: string;
+  parameters: LabResultParameter[];
+  notes?: string;
+  pathologistName: string;
+  pathologistLicense?: string;
+  fileUrl?: string;
+  attachedScans?: string[];
+  reviewStatus: 'draft' | 'reviewed' | 'released';
+  status: 'draft' | 'published';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PharmacyProfile {
+  pharmacyId: string;
+  pharmacyName: string;
+  ownerName: string;
+  licenseNumber: string;
+  phone: string;
+  whatsapp?: string;
+  address: string;
+  governorate: string;
+  mapsUrl?: string;
+  workingHours: string;
+  logoUrl?: string;
+  deliveryAvailable: boolean;
+  deliveryFee?: number;
+  nightDuty: boolean;
+  bio?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MedicineItem {
+  id: string;
+  pharmacyId: string;
+  pharmacyName: string;
+  pharmacyPhone?: string;
+  pharmacyGovernorate?: string;
+  pharmacyAddress?: string;
+  name: string;
+  category?: string;
+  description?: string;
+  activeIngredient: string;
+  brand: string;
+  manufacturer: string;
+  strength: string;
+  dosageForm: string;
+  packageSize: string;
+  price: number;
+  quantity: number;
+  minStockAlert: number;
+  expiryDate: string;
+  benefits?: string;
+  sideEffects?: string;
+  requiresPrescription: boolean;
+  isAvailable: boolean;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type PharmacyOrderStatus = 
+  | 'pending' 
+  | 'accepted' 
+  | 'preparing' 
+  | 'ready_for_pickup' 
+  | 'out_for_delivery' 
+  | 'completed' 
+  | 'cancelled';
+
+export interface PharmacyOrderItem {
+  medicineId: string;
+  name: string;
+  activeIngredient: string;
+  strength: string;
+  quantity: number;
+  unitPrice: number;
+  totalPrice: number;
+}
+
+export interface PharmacyOrder {
+  id: string;
+  pharmacyId: string;
+  pharmacyName: string;
+  patientId: string;
+  patientName: string;
+  patientPhone: string;
+  items: PharmacyOrderItem[];
+  totalAmount: number;
+  orderType: 'pickup' | 'delivery';
+  deliveryAddress?: string;
+  prescriptionUrl?: string;
+  status: PharmacyOrderStatus;
+  pharmacistNotes?: string;
+  cancellationReason?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PatientProfile {
+  patientId: string;
+  fullName: string;
+  fullNameAr?: string;
+  fullNameEn?: string;
+  medicalId: string;
+  email?: string;
+  phone: string;
+  secondaryPhone?: string;
+  governorate: string;
+  cityDistrict?: string;
+  address: string;
+  preferredLanguage?: 'ar' | 'en';
+  emergencyContactName?: string;
+  emergencyContactRelation?: string;
+  emergencyContactPhone?: string;
+  bloodType?: 'A+' | 'A-' | 'B+' | 'B-' | 'AB+' | 'AB-' | 'O+' | 'O-' | 'Unknown';
+  chronicDiseases?: string[];
+  allergies?: string[];
+  currentMedications?: string[];
+  previousSurgeries?: string[];
+  previousHospitalizations?: string[];
+  hasMedicalConditions?: boolean;
+  medicalConditions?: string[];
+  familyMedicalHistory?: string[];
+  additionalNotes?: string;
+  heightCm?: number;
+  weightKg?: number;
+  dateOfBirth?: string;
+  ageYears?: number;
+  gender?: 'male' | 'female';
+  photoURL?: string;
+  whatsapp?: string;
+  profileCompletion?: number;
+  verifiedByProfessional?: boolean;
+  verifiedDoctorName?: string;
+  verifiedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Automatically calculates patient age in years from date of birth.
+ */
+export function calculateAge(dateOfBirth?: string): number | null {
+  if (!dateOfBirth) return null;
+  const birth = new Date(dateOfBirth);
+  if (isNaN(birth.getTime())) return null;
+  const today = new Date();
+  let age = today.getFullYear() - birth.getFullYear();
+  const monthDiff = today.getMonth() - birth.getMonth();
+  if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birth.getDate())) {
+    age--;
+  }
+  return age >= 0 ? age : null;
+}
+
+/**
+ * Calculates patient profile completion percentage (0 - 100%)
+ */
+export function calculateProfileCompletion(profile: Partial<PatientProfile> | null | undefined): number {
+  if (!profile) return 0;
+  let points = 0;
+  const total = 100;
+
+  // Personal Info (50 pts)
+  if (profile.fullName?.trim() || profile.fullNameAr?.trim()) points += 10;
+  if (profile.phone?.trim()) points += 10;
+  if (profile.governorate?.trim()) points += 5;
+  if (profile.address?.trim() || profile.cityDistrict?.trim()) points += 5;
+  if (profile.dateOfBirth?.trim()) points += 10;
+  if (profile.gender) points += 5;
+  if (profile.emergencyContactName?.trim() && profile.emergencyContactPhone?.trim()) points += 5;
+
+  // Medical Info (50 pts)
+  if (profile.bloodType && profile.bloodType !== 'Unknown') points += 15;
+  if (profile.allergies && profile.allergies.length > 0) points += 10;
+  if (profile.chronicDiseases && profile.chronicDiseases.length > 0) points += 10;
+  if (profile.currentMedications && profile.currentMedications.length > 0) points += 5;
+  if ((profile.previousSurgeries && profile.previousSurgeries.length > 0) || (profile.previousHospitalizations && profile.previousHospitalizations.length > 0)) points += 5;
+  if (profile.additionalNotes?.trim() || (profile.medicalConditions && profile.medicalConditions.length > 0)) points += 5;
+
+  return Math.min(Math.max(points, 0), total);
+}
+
+export interface DoctorPatientVisit {
+  visitId: string;
+  date: string;
+  visitType: 'consultation' | 'followup' | 'urgent' | 'routine' | 'emergency';
+  chiefComplaint: string;
+  clinicalDiagnosis: string;
+  doctorPrivateNotes: string;
+  vitals?: {
+    bloodPressure?: string;
+    heartRate?: string;
+    temperature?: string;
+    bloodSugar?: string;
+    weightKg?: string;
+  };
+  treatmentPlan?: string;
+  prescriptionsLinked?: string[];
+  referralsLinked?: string[];
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface DoctorPatientChart {
+  id: string; // chart_${doctorId}_${patientId}
+  doctorId: string;
+  doctorName: string;
+  doctorSpecialty?: string;
+  patientId: string;
+  patientMedicalId: string;
+  patientName: string;
+  patientPhone: string;
+  patientGender?: 'male' | 'female';
+  patientBloodType?: string;
+  dateOfBirth?: string;
+  emergencyContactName?: string;
+  emergencyContactPhone?: string;
+  allergies?: string[];
+  chronicDiseases?: string[];
+  summaryDiagnosis?: string;
+  doctorPrivateNotes?: string;
+  firstVisitDate: string;
+  lastVisitDate: string;
+  visits: DoctorPatientVisit[];
+  status: 'active' | 'archived';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SubscriptionPlan {
+  id: string;
+  nameAr: string;
+  nameEn: string;
+  targetRole: UserRole | 'all';
+  priceIqd: number;
+  billingPeriod: 'monthly' | 'quarterly' | 'yearly' | 'custom';
+  descriptionAr: string;
+  descriptionEn: string;
+  featuresAr: string[];
+  featuresEn: string[];
+  isPopular?: boolean;
+  isActive: boolean;
+  maxDoctors?: number;
+  maxStaff?: number;
+  updatedAt: string;
+  updatedBy?: string;
+}
+
+export interface UserSubscription {
+  id: string;
+  userId: string;
+  userEmail: string;
+  userName: string;
+  userRole: UserRole;
+  facilityName?: string;
+  planId: string;
+  planName: string;
+  billingPeriod?: 'monthly' | 'quarterly' | 'yearly' | 'custom';
+  customPriceIqd: number;
+  status: 'active' | 'pending' | 'expired' | 'cancelled';
+  startDate: string;
+  endDate: string;
+  paymentRequestId?: string;
+  paymentMethod?: ManualPaymentMethodId;
+  activatedAt?: string;
+  approvedByUid?: string;
+  notes?: string;
+  updatedAt: string;
+  updatedBy?: string;
+}
+
+export type ManualPaymentMethodId = 'superqi' | 'zaincash';
+export type PaymentGatewayType = ManualPaymentMethodId;
+export type PaymentRequestStatus = 'pending' | 'under_review' | 'approved' | 'rejected';
+
+export interface PaymentMethodSetting {
+  id: ManualPaymentMethodId;
+  displayNameAr: string;
+  displayNameEn: string;
+  walletNumber: string;
+  instructionsAr: string;
+  instructionsEn: string;
+  isActive: boolean;
+  updatedAt: string;
+  updatedByUid?: string;
+}
+
+export interface PaymentSettings {
+  id: 'default';
+  methods: Record<ManualPaymentMethodId, PaymentMethodSetting>;
+  updatedAt: string;
+  updatedByUid?: string;
+  updatedByEmail?: string;
+}
+
+export interface PaymentSettingsHistoryEntry {
+  id: string;
+  methodId: ManualPaymentMethodId;
+  previousWalletNumber: string;
+  newWalletNumber: string;
+  previousIsActive: boolean;
+  newIsActive: boolean;
+  previousInstructionsAr?: string;
+  newInstructionsAr?: string;
+  updatedByUid: string;
+  updatedByEmail: string;
+  updatedAt: string;
+}
+
+export interface PaymentRequest {
+  id: string;
+  requestNumber: string; // e.g., MED-PAY-20261113-XXXX
+  userId: string;
+  userEmail: string;
+  customerName: string;
+  institutionName: string;
+  institutionType: UserRole;
+  planId: string;
+  planNameAr: string;
+  planNameEn: string;
+  billingPeriod: 'monthly' | 'quarterly' | 'yearly' | 'custom';
+  expectedAmountIqd: number;
+  amountIqd: number;
+  paymentMethod: ManualPaymentMethodId;
+  paymentMethodName: string;
+  receivingWalletNumber: string;
+  transferDate: string;
+  transactionReference?: string;
+  customerNote?: string;
+  receiptId: string;
+  receiptUrl: string;
+  receiptStoragePath: string;
+  receiptFileName: string;
+  receiptMimeType: string;
+  receiptSizeBytes: number;
+  status: PaymentRequestStatus;
+  internalNote?: string;
+  rejectionReason?: string;
+  reviewedByUid?: string;
+  reviewedByEmail?: string;
+  reviewedAt?: string;
+  approvedByUid?: string;
+  approvedAt?: string;
+  activatedSubscriptionStartDate?: string;
+  activatedSubscriptionEndDate?: string;
+  submittedAt: string;
+  updatedAt: string;
+}
+
+export interface PaymentReceiptRecord {
+  id: string;
+  paymentRequestId: string;
+  userId: string;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  storagePath: string;
+  downloadUrl: string;
+  uploadedAt: string;
+}
+
+export interface SubscriptionTransaction {
+  id: string;
+  paymentRequestId: string;
+  userId: string;
+  userEmail: string;
+  customerName: string;
+  institutionName: string;
+  institutionType: UserRole;
+  planId: string;
+  planNameAr: string;
+  planNameEn: string;
+  billingPeriod: 'monthly' | 'quarterly' | 'yearly' | 'custom';
+  paymentMethod: ManualPaymentMethodId;
+  receivingWalletNumber: string;
+  amountIqd: number;
+  currency: 'IQD';
+  transactionReference?: string;
+  receiptUrl: string;
+  subscriptionStartDate: string;
+  subscriptionEndDate: string;
+  approvedByUid: string;
+  approvedByEmail: string;
+  approvedAt: string;
+  createdAt: string;
+}
+
+export interface DeletedAccountTombstone {
+  uid: string;
+  email?: string;
+  previousRole?: UserRole;
+  deletedBy: 'self' | 'admin';
+  deletedByUid: string;
+  deletedAt: string;
+  reason?: string;
+}
+
+export interface WholesalerProfile {
+  wholesalerId: string;
+  warehouseName: string;
+  ownerName: string;
+  licenseNumber: string;
+  commercialRegNumber?: string;
+  phone: string;
+  whatsapp?: string;
+  address: string;
+  governorate: string;
+  deliveryCoverageGovernorates: string[];
+  minimumOrderValueIqd?: number;
+  workingHours: string;
+  logoUrl?: string;
+  bio?: string;
+  isVerified: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WholesaleMedicineItem {
+  id: string;
+  wholesalerId: string;
+  wholesalerName: string;
+  wholesalerPhone?: string;
+  name: string;
+  nameAr?: string;
+  activeIngredient: string;
+  manufacturer: string;
+  originCountry: string;
+  strength: string;
+  dosageForm: string;
+  packSize: string;
+  cartonCapacity: number;
+  batchNumber: string;
+  productionDate: string;
+  expiryDate: string;
+  wholesalePriceIqd: number;
+  wholesalePriceUsd?: number;
+  cartonPriceIqd?: number;
+  stockPacks: number;
+  minOrderQuantity: number;
+  isAvailable: boolean;
+  category: string;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type WholesaleOrderStatus = 
+  | 'pending' 
+  | 'approved' 
+  | 'preparing' 
+  | 'dispatched' 
+  | 'delivered' 
+  | 'rejected'
+  | 'cancelled';
+
+export interface WholesaleOrderItem {
+  medicineId: string;
+  name: string;
+  activeIngredient: string;
+  strength: string;
+  batchNumber: string;
+  packQuantity: number;
+  unitWholesalePriceIqd: number;
+  totalPriceIqd: number;
+}
+
+export interface WholesaleOrder {
+  id: string;
+  wholesalerId: string;
+  wholesalerName: string;
+  pharmacyId: string;
+  pharmacyName: string;
+  pharmacyPhone: string;
+  pharmacyAddress: string;
+  pharmacyGovernorate: string;
+  items: WholesaleOrderItem[];
+  totalAmountIqd: number;
+  status: WholesaleOrderStatus;
+  paymentMethod: 'cash_on_delivery' | 'credit_terms' | 'bank_transfer';
+  wholesalerNotes?: string;
+  pharmacyNotes?: string;
+  invoiceNumber?: string;
+  dispatchedAt?: string;
+  deliveredAt?: string;
+  rejectionReason?: string;
+  cancellationReason?: string;
+  createdAt: string;
+  updatedAt: string;
+}

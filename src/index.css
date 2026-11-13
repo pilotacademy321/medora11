@@ -1,0 +1,168 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --font-ar: 'Cairo', system-ui, -apple-system, sans-serif;
+    --font-en: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  }
+
+  html[dir="rtl"] {
+    font-family: var(--font-ar);
+  }
+
+  html[dir="ltr"] {
+    font-family: var(--font-en);
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+}
+
+/* Glass and gradient effects */
+.glass-panel {
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+}
+
+.glass-card {
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(226, 232, 240, 0.8);
+}
+
+.brand-gradient {
+  background: linear-gradient(135deg, #002244 0%, #003366 50%, #b8142a 100%);
+}
+
+.brand-gradient-btn {
+  background: linear-gradient(135deg, #003366 0%, #1e4b85 45%, #c4152e 100%);
+}
+
+/* Official MEDORA Multi-Device Responsive Background Rules */
+.medora-responsive-bg {
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+  background-size: cover;
+  background-position: center top;
+  transition: background-position 0.3s ease, background-size 0.3s ease;
+  will-change: transform;
+}
+
+/* 1. Mobile Phones Portrait (Android & iPhone <= 640px) */
+@media (max-width: 640px) {
+  .medora-responsive-bg {
+    background-size: cover;
+    background-position: 50% 0%;
+  }
+}
+
+/* 2. Mobile Phones Landscape (height <= 500px) */
+@media (max-height: 500px) and (orientation: landscape) {
+  .medora-responsive-bg {
+    background-size: cover;
+    background-position: center center;
+  }
+}
+
+/* 3. Mobile Landscape & Small Tablets (641px - 768px) */
+@media (min-width: 641px) and (max-width: 768px) {
+  .medora-responsive-bg {
+    background-size: cover;
+    background-position: 50% 10%;
+  }
+}
+
+/* 3. Tablets & iPads Portrait/Landscape (769px - 1024px) */
+@media (min-width: 769px) and (max-width: 1024px) {
+  .medora-responsive-bg {
+    background-size: cover;
+    background-position: center 15%;
+  }
+}
+
+/* 4. Laptops & Standard Desktops (1025px - 1536px) */
+@media (min-width: 1025px) and (max-width: 1536px) {
+  .medora-responsive-bg {
+    background-size: cover;
+    background-position: center center;
+  }
+}
+
+/* 5. Ultra-Wide & 4K Displays (>= 1537px) */
+@media (min-width: 1537px) {
+  .medora-responsive-bg {
+    background-size: cover;
+    background-position: center center;
+  }
+}
+
+/* ============================================================
+   MEDORA Official A4 Medical Printing Rules (RTL & LTR)
+   ============================================================ */
+@page {
+  size: A4 portrait;
+  margin: 12mm;
+}
+
+#medora-print-stage {
+  display: none;
+}
+
+@media print {
+  html,
+  body {
+    background: #ffffff !important;
+    color: #0f172a !important;
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  body.medora-print-stage-active > *:not(#medora-print-stage) {
+    display: none !important;
+  }
+
+  #medora-print-stage {
+    display: block !important;
+    width: 100% !important;
+    max-width: none !important;
+    position: static !important;
+    overflow: visible !important;
+    background: #ffffff !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .medora-print-sheet {
+    box-shadow: none !important;
+    max-height: none !important;
+    overflow: visible !important;
+    width: 100% !important;
+    max-width: none !important;
+    background: #ffffff !important;
+  }
+
+  .medora-print-avoid-break {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  table {
+    page-break-inside: auto;
+  }
+
+  tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  thead {
+    display: table-header-group;
+  }
+}

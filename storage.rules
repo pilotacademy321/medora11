@@ -1,0 +1,108 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        (
+          request.auth.token.email == 'bcgmoc@gmail.com'
+          && request.auth.token.email_verified == true
+        ) ||
+        firestore.exists(/databases/ai-studio-m737medicalplatf-06180e9d-e98a-4a8d-97fc-d8a6644012dc/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isConversationParticipant(conversationId) {
+      return isSignedIn() && (
+        isAdmin() || (
+          firestore.exists(/databases/ai-studio-m737medicalplatf-06180e9d-e98a-4a8d-97fc-d8a6644012dc/documents/conversations/$(conversationId)) &&
+          (
+            ('participantIds' in firestore.get(/databases/ai-studio-m737medicalplatf-06180e9d-e98a-4a8d-97fc-d8a6644012dc/documents/conversations/$(conversationId)).data &&
+              request.auth.uid in firestore.get(/databases/ai-studio-m737medicalplatf-06180e9d-e98a-4a8d-97fc-d8a6644012dc/documents/conversations/$(conversationId)).data.participantIds) ||
+            ('doctorId' in firestore.get(/databases/ai-studio-m737medicalplatf-06180e9d-e98a-4a8d-97fc-d8a6644012dc/documents/conversations/$(conversationId)).data &&
+              firestore.get(/databases/ai-studio-m737medicalplatf-06180e9d-e98a-4a8d-97fc-d8a6644012dc/documents/conversations/$(conversationId)).data.doctorId == request.auth.uid) ||
+            ('patientId' in firestore.get(/databases/ai-studio-m737medicalplatf-06180e9d-e98a-4a8d-97fc-d8a6644012dc/documents/conversations/$(conversationId)).data &&
+              firestore.get(/databases/ai-studio-m737medicalplatf-06180e9d-e98a-4a8d-97fc-d8a6644012dc/documents/conversations/$(conversationId)).data.patientId == request.auth.uid)
+          )
+        )
+      );
+    }
+
+    // Default deny
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+
+    // Radiology Scans, DICOM studies, and ultrasound archives
+    // Path structure: /radiology_scans/{centerId}/{bookingId}/{fileName}
+    match /radiology_scans/{centerId}/{bookingId}/{fileName} {
+      allow read: if isSignedIn() && (request.auth.uid == centerId || isAdmin());
+      allow write: if isSignedIn()
+        && request.resource.size > 0
+        && request.resource.size <= 100 * 1024 * 1024 // 100MB max for DICOM & radiological studies
+        && (request.auth.uid == centerId || isAdmin())
+        && request.resource.contentType.matches('^(image/(jpeg|jpg|png|webp|heic|heif|dicom)|application/pdf|application/dicom|application/octet-stream|application/zip|application/x-zip-compressed)$');
+      allow delete: if isSignedIn() && (request.auth.uid == centerId || isAdmin());
+    }
+
+    // Medical files, diagnostic reports, prescriptions, and laboratory attachments
+    // Path structure: /medical_files/{userId}/{fileName} or /medical_files/{userId}/{category}/{fileName}
+    match /medical_files/{userId}/{fileName} {
+      allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow write: if isSignedIn()
+        && request.resource.size > 0
+        && request.resource.size <= 50 * 1024 * 1024 // 50MB max
+        && (request.auth.uid == userId || isAdmin())
+        && request.resource.contentType.matches('^(image/(jpeg|jpg|png|webp|heic|heif|dicom)|application/pdf|application/dicom|application/octet-stream)$');
+      allow delete: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+    }
+
+    match /medical_files/{userId}/{category}/{fileName} {
+      allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow write: if isSignedIn()
+        && request.resource.size > 0
+        && request.resource.size <= 50 * 1024 * 1024 // 50MB max
+        && (request.auth.uid == userId || isAdmin())
+        && request.resource.contentType.matches('^(image/(jpeg|jpg|png|webp|heic|heif|dicom)|application/pdf|application/dicom|application/octet-stream)$');
+      allow delete: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+    }
+
+    // Public / Shared medical assets (logos, avatars, stamps, clinical templates)
+    match /public_assets/{fileName} {
+      allow read: if true;
+      allow write: if isSignedIn()
+        && request.resource.size > 0
+        && request.resource.size <= 5 * 1024 * 1024
+        && request.resource.contentType.matches('^image/(jpeg|jpg|png|webp|heic|heif)$');
+      allow delete: if isAdmin();
+    }
+
+    // Chat attachments for private role-scoped messaging
+    // Path structure: /chat_attachments/{conversationId}/{fileName}
+    match /chat_attachments/{conversationId}/{fileName} {
+      allow read: if isConversationParticipant(conversationId);
+      allow write: if isConversationParticipant(conversationId)
+        && request.resource.size > 0
+        && request.resource.size <= 25 * 1024 * 1024 // 25MB max
+        && request.resource.contentType.matches('^(image/(jpeg|jpg|png|webp|heic|heif|dicom)|application/pdf|application/dicom|audio/.*|application/octet-stream)$');
+      allow delete: if isAdmin();
+    }
+
+    // Subscription Transfer Payment Receipts (max 5 MB, JPG/JPEG/PNG/WEBP/HEIC/PDF)
+    // Restricted strictly to uploading owner and verified Super Admin
+    // Path structure: /payment_receipts/{userId}/{requestId}/{fileName}
+    match /payment_receipts/{userId}/{requestId}/{fileName} {
+      allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow write: if isSignedIn()
+        && request.auth.uid == userId
+        && request.resource.size > 0
+        && request.resource.size <= 5 * 1024 * 1024
+        && request.resource.contentType.matches('^(image/(jpeg|jpg|png|webp|heic|heif)|application/pdf)$');
+      allow delete: if false; // Never allow deletion of submitted financial receipts
+    }
+  }
+}

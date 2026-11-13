@@ -1,0 +1,6 @@
+{
+  "name": "MEDORA",
+  "description": "منصة MEDORA | ميدورا العراق — المنظومة الصحية الرقمية المتكاملة التي تجمع بين الأطباء والمختبرات ومراكز الأشعة والصيدليات والمذاخر والمرضى في مكان واحد.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

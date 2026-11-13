@@ -1,0 +1,4311 @@
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { useAuth } from '../context/AuthContext';
+import { useLanguage } from '../context/LanguageContext';
+import { db, handleFirestoreError, OperationType, sanitizeForFirestore } from '../lib/firebase';
+import { uploadMedicalDocumentFile } from '../lib/medicalStorage';
+import { 
+  PharmacyProfile, 
+  MedicineItem, 
+  PharmacyOrder, 
+  PharmacyOrderStatus,
+  WholesaleOrder,
+  WholesaleOrderItem,
+  WholesaleMedicineItem,
+  ElectronicPrescription,
+  PrescriptionStatus
+} from '../types';
+import { PrescriptionPdfModal } from './PrescriptionPdfModal';
+import { DrugInteractionPanel } from './DrugInteractionPanel';
+import { PrivateMessagingWorkspace } from './PrivateMessagingWorkspace';
+import { logAuditEvent } from '../lib/auditLogger';
+import { validateAndCompressImage, formatWhatsAppUrl } from '../utils/mediaUtils';
+import { canUserPrintPharmacyOrder, triggerIsolatedPrint } from '../utils/printingPermissions';
+import { collectScopedPatients, searchScopedPatients, hasValidPhoneNumber } from '../utils/patientSearch';
+import {
+  dispatchM737Notification,
+  notifyDoctorPrescriptionDispensed,
+  notifyPatientPharmacyOrderStatus,
+  notifyWholesalerNewOrder,
+} from '../lib/pushEventDispatcher';
+import { 
+  collection, 
+  query, 
+  where, 
+  getDocs, 
+  doc, 
+  getDoc, 
+  setDoc, 
+  updateDoc, 
+  deleteDoc 
+} from 'firebase/firestore';
+import { 
+  Pill, 
+  Search, 
+  Plus, 
+  CheckCircle2, 
+  XCircle, 
+  AlertCircle, 
+  MapPin, 
+  Phone, 
+  DollarSign, 
+  RefreshCw, 
+  Edit3, 
+  ShieldCheck, 
+  Save, 
+  Trash2, 
+  Activity, 
+  Check, 
+  Upload, 
+  MessageSquare, 
+  Eye, 
+  Send, 
+  Layers, 
+  ChevronRight, 
+  ChevronLeft, 
+  Users, 
+  Printer, 
+  X, 
+  ExternalLink, 
+  AlertTriangle, 
+  FileCheck2, 
+  Package, 
+  Calendar, 
+  Clock, 
+  Truck, 
+  ShieldAlert, 
+  FileText, 
+  BadgeAlert, 
+  Sparkles, 
+  ShoppingBag, 
+  HeartPulse, 
+  Settings,
+  Building2,
+  Copy
+} from 'lucide-react';
+import { SmartMedicineSearch, SearchMedicineResult } from './SmartMedicineSearch';
+import { generateFacilityOrUserId } from '../utils/medicalId';
+
+interface PharmacyPortalWorkspaceProps {
+  onBackToHome: () => void;
+}
+
+export const PharmacyPortalWorkspace: React.FC<PharmacyPortalWorkspaceProps> = ({ onBackToHome }) => {
+  const { user, userProfile, isAdmin, isDemoMode, refreshProfile } = useAuth();
+  const { language, isRTL } = useLanguage();
+  const dispensingSlipPrintRef = useRef<HTMLDivElement>(null);
+
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'prescriptions' | 'orders' | 'wholesale_b2b' | 'catalog' | 'inventory' | 'messages' | 'settings'>('dashboard');
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [feedbackMsg, setFeedbackMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // Electronic Prescriptions State
+  const [incomingPrescriptions, setIncomingPrescriptions] = useState<ElectronicPrescription[]>([]);
+  const [prescriptionFilter, setPrescriptionFilter] = useState<'all' | 'pending' | 'dispensed' | 'rejected'>('all');
+  const [rxLookupCode, setRxLookupCode] = useState('');
+  const [selectedPrescriptionForPdf, setSelectedPrescriptionForPdf] = useState<ElectronicPrescription | null>(null);
+  const [rejectingRx, setRejectingRx] = useState<ElectronicPrescription | null>(null);
+  const [rejectReason, setRejectReason] = useState('');
+
+  // Pharmacy Profile State
+  const [pharmacyProfile, setPharmacyProfile] = useState<PharmacyProfile | null>(null);
+
+  // Medicines Catalog & Inventory State
+  const [medicines, setMedicines] = useState<MedicineItem[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [dosageFormFilter, setDosageFormFilter] = useState('all');
+  const [inventoryStatusFilter, setInventoryStatusFilter] = useState<'all' | 'in_stock' | 'low_stock' | 'expired' | 'prescription'>('all');
+  const [showNewMedicineModal, setShowNewMedicineModal] = useState(false);
+  const [editingMedicine, setEditingMedicine] = useState<MedicineItem | null>(null);
+
+  const [medicineCategoryFilter, setMedicineCategoryFilter] = useState('all');
+  const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
+
+  // Medicine Form State
+  const [medicineForm, setMedicineForm] = useState({
+    name: '',
+    activeIngredient: '',
+    brand: '',
+    manufacturer: '',
+    category: 'Analgesics & Antipyretics (مسكنات وخافضات حرارة)',
+    strength: '500mg',
+    dosageForm: 'Tablets (أقراص)',
+    packageSize: '20 Tablets',
+    price: 3500,
+    quantity: 50,
+    minStockAlert: 10,
+    expiryDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+    description: '',
+    benefits: '',
+    sideEffects: '',
+    requiresPrescription: false,
+    isAvailable: true,
+    notes: '',
+  });
+
+  // Orders State
+  const [orders, setOrders] = useState<PharmacyOrder[]>([]);
+  const [orderFilter, setOrderFilter] = useState<'all' | 'pending' | 'accepted' | 'preparing' | 'ready_for_pickup' | 'out_for_delivery' | 'completed' | 'cancelled'>('all');
+  const [showNewOrderModal, setShowNewOrderModal] = useState(false);
+  const [cancellingOrder, setCancellingOrder] = useState<PharmacyOrder | null>(null);
+  const [cancelReason, setCancelReason] = useState('');
+  const [selectedOrderDetails, setSelectedOrderDetails] = useState<PharmacyOrder | null>(null);
+
+  // Wholesale B2B Procurement State
+  const [b2bOrders, setB2bOrders] = useState<WholesaleOrder[]>([]);
+  const [b2bCart, setB2bCart] = useState<Array<{ medicine: SearchMedicineResult; packQuantity: number; unitPrice: number; cartonPrice?: number; maxStockPacks?: number }>>([]);
+  const [showB2bCartModal, setShowB2bCartModal] = useState(false);
+  const [b2bNotes, setB2bNotes] = useState('');
+  const [selectedB2bOrderDetails, setSelectedB2bOrderDetails] = useState<WholesaleOrder | null>(null);
+  const [b2bSubmitting, setB2bSubmitting] = useState(false);
+  const [registeredWholesalers, setRegisteredWholesalers] = useState<Array<{ id: string; name: string; governorate?: string; phone?: string; licenseNumber?: string; bio?: string }>>([]);
+  const [selectedWarehouseId, setSelectedWarehouseId] = useState<string | null>(null);
+  const [warehouseCatalog, setWarehouseCatalog] = useState<WholesaleMedicineItem[]>([]);
+  const [loadingWarehouseCatalog, setLoadingWarehouseCatalog] = useState(false);
+  const [warehouseCatalogSearch, setWarehouseCatalogSearch] = useState('');
+  const [warehouseQtyDrafts, setWarehouseQtyDrafts] = useState<Record<string, number>>({});
+  const [scopedCustomerQuery, setScopedCustomerQuery] = useState('');
+
+  // New Order Form State
+  const [newOrderData, setNewOrderData] = useState({
+    patientName: '',
+    patientPhone: '',
+    medicineId: '',
+    quantity: 1,
+    orderType: 'pickup' as 'pickup' | 'delivery',
+    deliveryAddress: '',
+    pharmacistNotes: '',
+  });
+
+  // Pharmacy Settings State
+  const [editProfileForm, setEditProfileForm] = useState({
+    pharmacyName: '',
+    ownerName: '',
+    licenseNumber: '',
+    phone: '',
+    whatsapp: '',
+    address: '',
+    governorate: 'بغداد (Baghdad)',
+    mapsUrl: '',
+    workingHours: '8:00 AM - 12:00 AM',
+    logoUrl: '',
+    deliveryAvailable: true,
+    deliveryFee: 4000,
+    nightDuty: false,
+    bio: '',
+  });
+
+  const isOperable = userProfile?.status === 'approved' || isAdmin;
+
+  const dosageFormsList = [
+    'Tablets (أقراص)',
+    'Capsules (كبسولات)',
+    'Syrup (شراب)',
+    'Suspension (معلق)',
+    'Injection / Ampoule (حقن)',
+    'Cream / Ointment (مرهم / كريم)',
+    'Inhaler (بخاخ)',
+    'Eye/Ear Drops (قطرات)',
+    'Suppositories (تحاميل)',
+    'Effervescent (فوار)'
+  ];
+
+  const medicineCategoriesList = [
+    'Analgesics & Antipyretics (مسكنات وخافضات حرارة)',
+    'Antibiotics (مضادات حيوية)',
+    'Cardiovascular & BP (القلب وضغط الدم)',
+    'Diabetes & Endocrine (السكري والغدد)',
+    'Gastrointestinal (الجهاز الهضمي)',
+    'Respiratory & Allergy (الجهاز التنفسي والحساسية)',
+    'Vitamins & Supplements (فيتامينات ومكملات)',
+    'Dermatology (الأمراض الجلدية)',
+    'Ophthalmology & ENT (العيون والأنف والأذن)',
+    'Chronic & Specialty (أدوية الأمراض المزمنة)',
+    'Other (أخرى)'
+  ];
+
+  const governoratesList = [
+    'بغداد (Baghdad)',
+    'البصرة (Basra)',
+    'أربيل (Erbil)',
+    'النجف الأشرف (Najaf)',
+    'كربلاء المقدسة (Karbala)',
+    'نينوى / الموصل (Nineveh)',
+    'السليمانية (Sulaymaniyah)',
+    'بابل / الحلة (Babylon)',
+    'الأنبار (Anbar)',
+    'ديالى (Diyala)',
+    'كركوك (Kirkuk)',
+    'ذي قار / الناصرية (Dhi Qar)',
+    'ميسان / العمارة (Maysan)',
+    'المثنى / السماوة (Muthanna)',
+    'القادسية / الديوانية (Qadisiyyah)',
+    'واسط / الكوت (Wasit)',
+    'صلاح الدين (Saladin)',
+    'دهوك (Duhok)'
+  ];
+
+  // Helper to determine expiry status
+  const isMedicineExpired = (expiryDate: string): boolean => {
+    if (!expiryDate) return false;
+    const expiry = new Date(expiryDate).getTime();
+    const today = new Date().setHours(0, 0, 0, 0);
+    return expiry < today;
+  };
+
+  const isMedicineExpiringSoon = (expiryDate: string): boolean => {
+    if (!expiryDate) return false;
+    const expiry = new Date(expiryDate).getTime();
+    const today = new Date().setHours(0, 0, 0, 0);
+    const sixtyDaysLater = today + 60 * 24 * 60 * 60 * 1000;
+    return expiry >= today && expiry <= sixtyDaysLater;
+  };
+
+  // Load All Pharmacy Data from Firestore
+  const loadPharmacyData = async () => {
+    if (!user) return;
+    try {
+      // 1. Fetch Pharmacy Profile
+      const profRef = doc(db, 'pharmacy_profiles', user.uid);
+      const profSnap = await getDoc(profRef);
+
+      if (profSnap.exists()) {
+        const data = profSnap.data() as PharmacyProfile;
+        setPharmacyProfile(data);
+        setEditProfileForm({
+          pharmacyName: data.pharmacyName || userProfile?.facilityName || userProfile?.displayName || '',
+          ownerName: data.ownerName || userProfile?.displayName || '',
+          licenseNumber: data.licenseNumber || userProfile?.licenseNumber || '',
+          phone: data.phone || userProfile?.phone || '',
+          whatsapp: data.whatsapp || data.phone || userProfile?.phone || '',
+          address: data.address || '',
+          governorate: data.governorate || userProfile?.governorate || 'بغداد (Baghdad)',
+          mapsUrl: data.mapsUrl || '',
+          workingHours: data.workingHours || '8:00 AM - 12:00 AM',
+          logoUrl: data.logoUrl || '',
+          deliveryAvailable: data.deliveryAvailable ?? true,
+          deliveryFee: data.deliveryFee ?? 4000,
+          nightDuty: data.nightDuty ?? false,
+          bio: data.bio || '',
+        });
+      } else {
+        // Initialize clean pharmacy profile from authenticated user account data (no fabricated demo data)
+        const initialProfile: PharmacyProfile = {
+          pharmacyId: user.uid,
+          pharmacyName: userProfile?.facilityName || userProfile?.displayName || '',
+          ownerName: userProfile?.displayName || '',
+          licenseNumber: userProfile?.licenseNumber || '',
+          phone: userProfile?.phone || '',
+          whatsapp: userProfile?.phone || '',
+          address: userProfile?.governorate || '',
+          governorate: userProfile?.governorate || 'بغداد (Baghdad)',
+          mapsUrl: '',
+          workingHours: '8:00 AM - 12:00 AM',
+          logoUrl: '',
+          deliveryAvailable: true,
+          deliveryFee: 4000,
+          nightDuty: false,
+          bio: '',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+        await setDoc(profRef, sanitizeForFirestore(initialProfile));
+        setPharmacyProfile(initialProfile);
+        setEditProfileForm({
+          pharmacyName: initialProfile.pharmacyName,
+          ownerName: initialProfile.ownerName,
+          licenseNumber: initialProfile.licenseNumber,
+          phone: initialProfile.phone,
+          whatsapp: initialProfile.whatsapp || '',
+          address: initialProfile.address,
+          governorate: initialProfile.governorate,
+          mapsUrl: '',
+          workingHours: initialProfile.workingHours,
+          logoUrl: '',
+          deliveryAvailable: initialProfile.deliveryAvailable,
+          deliveryFee: initialProfile.deliveryFee ?? 4000,
+          nightDuty: initialProfile.nightDuty,
+          bio: '',
+        });
+      }
+
+      // 2. Fetch Pharmacy Medicines Inventory
+      const medQuery = query(
+        collection(db, 'medicines'),
+        where('pharmacyId', '==', user.uid)
+      );
+      const medSnap = await getDocs(medQuery);
+      const medList = medSnap.docs.map(d => ({ id: d.id, ...d.data() } as MedicineItem));
+      setMedicines(medList);
+
+      // 3. Fetch Pharmacy Orders
+      const ordQuery = query(
+        collection(db, 'pharmacy_orders'),
+        where('pharmacyId', '==', user.uid)
+      );
+      const ordSnap = await getDocs(ordQuery);
+      const ordList = ordSnap.docs.map(d => ({ id: d.id, ...d.data() } as PharmacyOrder));
+      ordList.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      setOrders(ordList);
+
+      // 4. Fetch Wholesale B2B Orders Placed to Warehouses
+      try {
+        const b2bQuery = query(
+          collection(db, 'wholesale_orders'),
+          where('pharmacyId', '==', user.uid)
+        );
+        const b2bSnap = await getDocs(b2bQuery);
+        const b2bList = b2bSnap.docs.map(d => ({ id: d.id, ...d.data() } as WholesaleOrder));
+        b2bList.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        setB2bOrders(b2bList);
+
+        // 5. Fetch Electronic Prescriptions Targeted to this Pharmacy
+        try {
+          const rxQuery = query(
+            collection(db, 'electronic_prescriptions'),
+            where('targetPharmacyId', '==', user.uid)
+          );
+          const rxSnap = await getDocs(rxQuery);
+          const rxList = rxSnap.docs.map(d => ({ id: d.id, ...d.data() } as ElectronicPrescription));
+          rxList.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+          setIncomingPrescriptions(rxList);
+        } catch {
+          setIncomingPrescriptions([]);
+        }
+
+        // 6. Fetch Real Accredited Wholesalers from Firestore
+        try {
+          const wQuery = query(
+            collection(db, 'users'),
+            where('role', '==', 'wholesaler'),
+            where('status', '==', 'approved')
+          );
+          const wSnap = await getDocs(wQuery);
+          const realWholesalers = wSnap.docs.map(d => {
+            const wData = d.data();
+            return {
+              id: d.id,
+              name: wData.facilityName || wData.displayName || 'مذخر أدوية معتمد',
+              governorate: wData.governorate || 'العراق',
+              phone: wData.phone || '',
+              licenseNumber: wData.licenseNumber || '',
+              bio: wData.bio || '',
+            };
+          });
+          setRegisteredWholesalers(realWholesalers);
+        } catch (wErr) {
+          console.warn('Could not load registered wholesalers:', wErr);
+        }
+
+      } catch {
+        setB2bOrders([]);
+      }
+
+    } catch (err: unknown) {
+      console.error('Error loading pharmacy data:', err);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  useEffect(() => {
+    loadPharmacyData();
+  }, [user]);
+
+  const showToast = (text: string, type: 'success' | 'error' = 'success') => {
+    setFeedbackMsg({ text, type });
+    setTimeout(() => setFeedbackMsg(null), 4000);
+  };
+
+  // Helper to send push & in-app notification
+  const sendPatientNotification = async (recipientUid: string, title: string, message: string, type: 'booking_update' | 'general') => {
+    if (!recipientUid) return;
+    try {
+      await dispatchM737Notification({
+        recipientUid,
+        recipientRole: type === 'booking_update' ? 'patient' : undefined,
+        category: 'order',
+        titleAr: title,
+        titleEn: title,
+        messageAr: message,
+        messageEn: message,
+        targetPortal: 'patient',
+        targetUrl: '/patient',
+        sourceEventId: `pharm_notif_${Date.now()}`,
+      });
+    } catch (e) {
+      console.warn('Failed to dispatch notification:', e);
+    }
+  };
+
+  // Electronic Prescription Handlers
+  const handleAcceptPrescription = async (rxId: string) => {
+    try {
+      const rx = incomingPrescriptions.find(p => p.id === rxId);
+      if (!rx) return;
+      if (rx.status === 'dispensed') {
+        showToast(language === 'ar' ? 'الوصفة مصروفة بالفعل' : 'Prescription already dispensed', 'error');
+        return;
+      }
+
+      await updateDoc(doc(db, 'electronic_prescriptions', rxId), {
+        status: 'accepted',
+        updatedAt: new Date().toISOString(),
+      });
+      setIncomingPrescriptions(prev => prev.map(p => p.id === rxId ? { ...p, status: 'accepted', updatedAt: new Date().toISOString() } : p));
+      showToast(language === 'ar' ? 'تم قبول الوصفة وبدء تجهيز الأدوية' : 'Prescription accepted');
+      if (rx.patientId) {
+        sendPatientNotification(rx.patientId, 'تم قبول وصفتك الطبية', `تم قبول الوصفة رقم ${rx.prescriptionNumber} من قبل ${pharmacyProfile?.pharmacyName || 'الصيدلية'} وهي قيد التجهيز.`, 'general');
+      }
+    } catch {
+      setIncomingPrescriptions(prev => prev.map(p => p.id === rxId ? { ...p, status: 'accepted', updatedAt: new Date().toISOString() } : p));
+      showToast(language === 'ar' ? 'تم قبول الوصفة وتجهيزها' : 'Prescription accepted');
+    }
+  };
+
+  const handleStartDispensing = async (rxId: string) => {
+    try {
+      await updateDoc(doc(db, 'electronic_prescriptions', rxId), {
+        status: 'dispensing',
+        updatedAt: new Date().toISOString(),
+      });
+      setIncomingPrescriptions(prev => prev.map(p => p.id === rxId ? { ...p, status: 'dispensing', updatedAt: new Date().toISOString() } : p));
+      showToast(language === 'ar' ? 'الوصفة قيد التحضير المباشر' : 'Prescription dispensing in progress');
+    } catch {
+      setIncomingPrescriptions(prev => prev.map(p => p.id === rxId ? { ...p, status: 'dispensing', updatedAt: new Date().toISOString() } : p));
+      showToast(language === 'ar' ? 'الوصفة قيد التحضير' : 'Dispensing');
+    }
+  };
+
+  const handleOpenRejectModal = (rx: ElectronicPrescription) => {
+    setRejectingRx(rx);
+    setRejectReason('');
+  };
+
+  const handleConfirmReject = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!rejectingRx) return;
+    if (!rejectReason.trim()) {
+      showToast(language === 'ar' ? 'يرجى كتابة سبب رفض صرف الوصفة' : 'Please provide reason', 'error');
+      return;
+    }
+
+    try {
+      const now = new Date().toISOString();
+      await updateDoc(doc(db, 'electronic_prescriptions', rejectingRx.id), {
+        status: 'rejected',
+        rejectionReason: rejectReason.trim(),
+        updatedAt: now,
+      });
+      setIncomingPrescriptions(prev => prev.map(p => p.id === rejectingRx.id ? { 
+        ...p, 
+        status: 'rejected', 
+        rejectionReason: rejectReason.trim(),
+        updatedAt: now 
+      } : p));
+      showToast(language === 'ar' ? 'تم رفض الوصفة وتسجيل السبب وإبلاغ الطبيب والمريض' : 'Prescription rejected');
+      
+      // Notify Patient
+      if (rejectingRx.patientId) {
+        sendPatientNotification(
+          rejectingRx.patientId,
+          'تعذر صرف الوصفة',
+          `اعتذرت الصيدلية عن صرف الوصفة ${rejectingRx.prescriptionNumber} لسبب: ${rejectReason.trim()}`,
+          'general'
+        );
+      }
+      // Notify Doctor
+      if (rejectingRx.doctorId) {
+        sendPatientNotification(
+          rejectingRx.doctorId,
+          'اعتذار عن صرف الوصفة',
+          `اعتذرت ${pharmacyProfile?.pharmacyName || 'الصيدلية'} عن صرف الوصفة ${rejectingRx.prescriptionNumber} للمريض ${rejectingRx.patientName}. السبب: ${rejectReason.trim()}`,
+          'general'
+        );
+      }
+
+      await logAuditEvent({
+        action: 'prescription_rejected',
+        category: 'prescriptions',
+        actorUid: user?.uid || 'pharma',
+        actorName: pharmacyProfile?.pharmacyName || userProfile?.facilityName || 'الصيدلية',
+        actorRole: 'pharmacy',
+        targetUid: rejectingRx.doctorId,
+        targetName: rejectingRx.doctorName,
+        targetRole: 'doctor',
+        resourceId: rejectingRx.id,
+        resourceNumber: rejectingRx.prescriptionNumber,
+        status: 'rejected',
+        details: `اعتذار عن صرف الوصفة رقم ${rejectingRx.prescriptionNumber}. السبب: ${rejectReason.trim()}`
+      });
+
+      setRejectingRx(null);
+      setRejectReason('');
+    } catch {
+      setIncomingPrescriptions(prev => prev.map(p => p.id === rejectingRx.id ? { 
+        ...p, 
+        status: 'rejected', 
+        rejectionReason: rejectReason.trim(),
+        updatedAt: new Date().toISOString() 
+      } : p));
+      showToast(language === 'ar' ? 'تم رفض الوصفة' : 'Prescription rejected');
+      setRejectingRx(null);
+    }
+  };
+
+  const handleDispensePrescription = async (rx: ElectronicPrescription) => {
+    if (!user) return;
+    // CRITICAL: Invariant check against duplicate dispensing
+    if (rx.status === 'dispensed' || rx.dispensedAt) {
+      showToast(language === 'ar' ? 'تنبيه أمني: هذه الوصفة تم صرفها مسبقاً ومقفلة أمنياً ضد الصرف المزدوج!' : 'Security Alert: This Rx has already been dispensed!', 'error');
+      return;
+    }
+
+    try {
+      const now = new Date().toISOString();
+      const dispensedData = {
+        status: 'dispensed' as PrescriptionStatus,
+        dispensedAt: now,
+        dispensedByUid: user.uid,
+        dispensedByName: userProfile?.displayName || pharmacyProfile?.ownerName || 'الصيدلي المعتمد',
+        dispensedPharmacyId: user.uid,
+        dispensedPharmacyName: pharmacyProfile?.pharmacyName || userProfile?.facilityName || 'صيدلية معتمدة',
+        updatedAt: now,
+      };
+
+      await updateDoc(doc(db, 'electronic_prescriptions', rx.id), dispensedData);
+      setIncomingPrescriptions(prev => prev.map(p => p.id === rx.id ? { ...p, ...dispensedData } : p));
+      showToast(language === 'ar' ? `تم توثيق صرف الوصفة ${rx.prescriptionNumber} بنجاح وختمها إلكترونياً` : `Prescription ${rx.prescriptionNumber} certified and dispensed!`);
+
+      // Notify Patient
+      if (rx.patientId) {
+        sendPatientNotification(
+          rx.patientId,
+          'تم صرف الوصفة بنجاح',
+          `تم صرف وتسليم أدويتك بنجاح من قبل ${dispensedData.dispensedPharmacyName}. عافاك الله!`,
+          'general'
+        );
+      }
+
+      // Notify Doctor via real Push Notification
+      if (rx.doctorId) {
+        await notifyDoctorPrescriptionDispensed({
+          doctorUid: rx.doctorId,
+          patientName: rx.patientName,
+          prescriptionNumber: rx.prescriptionNumber,
+          pharmacyName: dispensedData.dispensedPharmacyName,
+        });
+      }
+
+      // Record System Audit Log
+      await logAuditEvent({
+        action: 'prescription_dispensed',
+        category: 'prescriptions',
+        actorUid: user.uid,
+        actorName: dispensedData.dispensedPharmacyName,
+        actorRole: 'pharmacy',
+        targetUid: rx.patientId,
+        targetName: rx.patientName,
+        targetRole: 'patient',
+        resourceId: rx.id,
+        resourceNumber: rx.prescriptionNumber,
+        status: 'dispensed',
+        details: `صرف وتوثيق خروج الأدوية للوصفة رقم ${rx.prescriptionNumber} بواسطة الصيدلي ${dispensedData.dispensedByName}.`
+      });
+    } catch {
+      const now = new Date().toISOString();
+      const dispensedData = {
+        status: 'dispensed' as PrescriptionStatus,
+        dispensedAt: now,
+        dispensedByUid: user.uid,
+        dispensedByName: userProfile?.displayName || 'الصيدلي المعتمد',
+        dispensedPharmacyId: user.uid,
+        dispensedPharmacyName: pharmacyProfile?.pharmacyName || 'صيدلية معتمدة',
+        updatedAt: now,
+      };
+      setIncomingPrescriptions(prev => prev.map(p => p.id === rx.id ? { ...p, ...dispensedData } : p));
+      showToast(language === 'ar' ? 'تم توثيق صرف الوصفة' : 'Prescription dispensed');
+    }
+  };
+
+  const handleLookupPrescription = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const raw = rxLookupCode.trim();
+    if (!raw) return;
+
+    try {
+      const code = raw.toUpperCase();
+
+      // 1. Strict Electronic Prescription Number lookup (e.g. RX-2026-...)
+      const qRx = query(
+        collection(db, 'electronic_prescriptions'),
+        where('prescriptionNumber', '==', code)
+      );
+      const snap = await getDocs(qRx);
+
+      if (!snap.empty) {
+        const foundList = snap.docs.map(d => ({ id: d.id, ...d.data() } as ElectronicPrescription));
+        setIncomingPrescriptions(prev => {
+          const existingIds = new Set(prev.map(p => p.id));
+          const newOnes = foundList.filter(p => !existingIds.has(p.id));
+          return [...newOnes, ...prev];
+        });
+
+        setScopedCustomerQuery('');
+        setActiveTab('prescriptions');
+        setPrescriptionFilter('all');
+        showToast(
+          language === 'ar'
+            ? `تم استرجاع الوصفة رقم ${code} بنجاح`
+            : `Loaded prescription ${code} successfully`
+        );
+        return;
+      }
+
+      // 2. Fallback: Pharmacy-Scoped Customer Search by Full Name or Phone within this pharmacy's existing prescriptions & orders
+      const scopedCandidates = collectScopedPatients([
+        ...incomingPrescriptions.map((p) => ({
+          patientId: p.patientId,
+          patientName: p.patientName,
+          patientPhone: p.patientPhone,
+          sourceLabel: 'Prescription',
+        })),
+        ...orders.map((o) => ({
+          patientId: o.patientId,
+          patientName: o.patientName,
+          patientPhone: o.patientPhone,
+          sourceLabel: 'Order',
+        })),
+      ]);
+      const matchedCustomers = searchScopedPatients(scopedCandidates, raw);
+
+      if (matchedCustomers.length > 0) {
+        setScopedCustomerQuery(raw);
+        setActiveTab('prescriptions');
+        setPrescriptionFilter('all');
+        showToast(
+          language === 'ar'
+            ? `تم العثور على (${matchedCustomers.length}) مراجع مرتبط بصيدليتك بالاسم أو الهاتف`
+            : `Found (${matchedCustomers.length}) linked customer(s) by name or phone`
+        );
+        return;
+      }
+
+      showToast(
+        language === 'ar'
+          ? `لم يتم العثور على وصفة بالرقم "${raw}" أو عميل مرتبط بصيدليتك بهذا الاسم أو الهاتف.`
+          : `No prescription "${raw}" or linked pharmacy customer found for this name/phone.`,
+        'error'
+      );
+    } catch (err) {
+      console.warn('Prescription lookup error:', err);
+      showToast(language === 'ar' ? 'تعذر البحث عن الوصفة' : 'Lookup failed', 'error');
+    }
+  };
+
+  // Add or Edit Medicine
+  const handleSaveMedicine = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || !medicineForm.name.trim() || !medicineForm.activeIngredient.trim()) return;
+
+    if (!isOperable) {
+      showToast(language === 'ar' ? 'يتطلب إجراء العمليات اعتماد المشرف العام' : 'Super Admin approval required', 'error');
+      return;
+    }
+
+    const numericPrice = Number(medicineForm.price);
+    const numericQty = Number(medicineForm.quantity);
+    if (!Number.isFinite(numericPrice) || numericPrice <= 0 || !Number.isFinite(numericQty) || numericQty < 0) {
+      showToast(language === 'ar' ? 'يرجى إدخال سعر صحيح أكبر من صفر وكمية صالحة' : 'Please enter a valid price and quantity', 'error');
+      return;
+    }
+
+    // Prevent duplicate medicines within the same pharmacy (same brand name + strength + dosageForm)
+    if (!editingMedicine) {
+      const normalizedName = medicineForm.name.trim().toLowerCase();
+      const normalizedStrength = medicineForm.strength.trim().toLowerCase();
+      const duplicate = medicines.find(
+        (m) =>
+          m.name.trim().toLowerCase() === normalizedName &&
+          m.strength.trim().toLowerCase() === normalizedStrength &&
+          m.dosageForm === medicineForm.dosageForm
+      );
+      if (duplicate) {
+        showToast(
+          language === 'ar'
+            ? 'هذا الدواء مسجل مسبقاً في صيدليتك بنفس العيار والشكل الصيدلاني. يمكنك تعديل كميته مباشرة.'
+            : 'This medicine is already in your catalog with the same strength & dosage form. Edit stock instead.',
+          'error'
+        );
+        return;
+      }
+    }
+
+    try {
+      const expired = isMedicineExpired(medicineForm.expiryDate);
+      const available = expired ? false : (numericQty > 0 && medicineForm.isAvailable);
+      const now = new Date().toISOString();
+
+      if (editingMedicine) {
+        // Update existing medicine (enforcing pharmacy ownership)
+        if (editingMedicine.pharmacyId !== user.uid && !isAdmin) {
+          showToast(language === 'ar' ? 'غير مصرح بتعديل دواء لا يتبع لصيدليتك' : 'Unauthorized medicine edit', 'error');
+          return;
+        }
+        await updateDoc(doc(db, 'medicines', editingMedicine.id), {
+          name: medicineForm.name.trim(),
+          activeIngredient: medicineForm.activeIngredient.trim(),
+          brand: medicineForm.brand.trim() || medicineForm.name.trim(),
+          manufacturer: medicineForm.manufacturer.trim(),
+          category: medicineForm.category || 'Other (أخرى)',
+          strength: medicineForm.strength.trim(),
+          dosageForm: medicineForm.dosageForm,
+          packageSize: medicineForm.packageSize.trim(),
+          price: numericPrice,
+          quantity: numericQty,
+          minStockAlert: Number(medicineForm.minStockAlert),
+          expiryDate: medicineForm.expiryDate,
+          description: medicineForm.description.trim(),
+          benefits: medicineForm.benefits.trim(),
+          sideEffects: medicineForm.sideEffects.trim(),
+          requiresPrescription: medicineForm.requiresPrescription,
+          isAvailable: available,
+          notes: medicineForm.notes.trim(),
+          pharmacyName: pharmacyProfile?.pharmacyName || userProfile?.facilityName || 'الصيدلية',
+          pharmacyPhone: pharmacyProfile?.phone || userProfile?.phone || '',
+          pharmacyGovernorate: pharmacyProfile?.governorate || userProfile?.governorate || 'بغداد (Baghdad)',
+          pharmacyAddress: pharmacyProfile?.address || '',
+          updatedAt: now,
+        });
+        showToast(language === 'ar' ? 'تم تحديث بيانات الدواء بالمخزون بنجاح' : 'Medicine updated');
+      } else {
+        // Create new medicine item owned strictly by this pharmacy
+        const mId = `med_${user.uid.slice(0, 6)}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+        const newItem: MedicineItem = {
+          id: mId,
+          pharmacyId: user.uid,
+          pharmacyName: pharmacyProfile?.pharmacyName || userProfile?.facilityName || 'الصيدلية',
+          pharmacyPhone: pharmacyProfile?.phone || userProfile?.phone || '',
+          pharmacyGovernorate: pharmacyProfile?.governorate || userProfile?.governorate || 'بغداد (Baghdad)',
+          pharmacyAddress: pharmacyProfile?.address || '',
+          name: medicineForm.name.trim(),
+          activeIngredient: medicineForm.activeIngredient.trim(),
+          brand: medicineForm.brand.trim() || medicineForm.name.trim(),
+          manufacturer: medicineForm.manufacturer.trim(),
+          category: medicineForm.category || 'Other (أخرى)',
+          strength: medicineForm.strength.trim(),
+          dosageForm: medicineForm.dosageForm,
+          packageSize: medicineForm.packageSize.trim(),
+          price: numericPrice,
+          quantity: numericQty,
+          minStockAlert: Number(medicineForm.minStockAlert),
+          expiryDate: medicineForm.expiryDate,
+          description: medicineForm.description.trim(),
+          benefits: medicineForm.benefits.trim(),
+          sideEffects: medicineForm.sideEffects.trim(),
+          requiresPrescription: medicineForm.requiresPrescription,
+          isAvailable: available,
+          notes: medicineForm.notes.trim(),
+          createdAt: now,
+          updatedAt: now,
+        };
+        await setDoc(doc(db, 'medicines', mId), sanitizeForFirestore(newItem));
+        showToast(language === 'ar' ? 'تمت إضافة الدواء بنجاح للمخزون الصيدلاني' : 'Medicine registered in catalog');
+      }
+
+      setShowNewMedicineModal(false);
+      setEditingMedicine(null);
+      resetMedicineForm();
+      await loadPharmacyData();
+    } catch (err: unknown) {
+      handleFirestoreError(err, OperationType.CREATE, 'medicines');
+    }
+  };
+
+  const resetMedicineForm = () => {
+    setMedicineForm({
+      name: '',
+      activeIngredient: '',
+      brand: '',
+      manufacturer: '',
+      category: 'Analgesics & Antipyretics (مسكنات وخافضات حرارة)',
+      strength: '500mg',
+      dosageForm: 'Tablets (أقراص)',
+      packageSize: '20 Tablets',
+      price: 3500,
+      quantity: 50,
+      minStockAlert: 10,
+      expiryDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+      description: '',
+      benefits: '',
+      sideEffects: '',
+      requiresPrescription: false,
+      isAvailable: true,
+      notes: '',
+    });
+  };
+
+  const handleEditClick = (m: MedicineItem) => {
+    setEditingMedicine(m);
+    setMedicineForm({
+      name: m.name,
+      activeIngredient: m.activeIngredient,
+      brand: m.brand,
+      manufacturer: m.manufacturer,
+      category: m.category || 'Analgesics & Antipyretics (مسكنات وخافضات حرارة)',
+      strength: m.strength,
+      dosageForm: m.dosageForm,
+      packageSize: m.packageSize,
+      price: m.price,
+      quantity: m.quantity,
+      minStockAlert: m.minStockAlert || 5,
+      expiryDate: m.expiryDate,
+      description: m.description || '',
+      benefits: m.benefits || '',
+      sideEffects: m.sideEffects || '',
+      requiresPrescription: m.requiresPrescription,
+      isAvailable: m.isAvailable,
+      notes: m.notes || '',
+    });
+    setShowNewMedicineModal(true);
+  };
+
+  const handleDeleteMedicine = async (medId: string) => {
+    try {
+      await deleteDoc(doc(db, 'medicines', medId));
+      showToast(language === 'ar' ? 'تم حذف الدواء من السجل بنجاح' : 'Medicine removed');
+      await loadPharmacyData();
+    } catch (err: unknown) {
+      handleFirestoreError(err, OperationType.DELETE, `medicines/${medId}`);
+    }
+  };
+
+  // Quick Stock Adjustment
+  const handleAdjustStock = async (medId: string, currentQty: number, delta: number) => {
+    const newQty = Math.max(0, currentQty + delta);
+    try {
+      const med = medicines.find(m => m.id === medId);
+      const isExpired = med ? isMedicineExpired(med.expiryDate) : false;
+      const isAvailable = isExpired ? false : newQty > 0;
+
+      await updateDoc(doc(db, 'medicines', medId), {
+        quantity: newQty,
+        isAvailable,
+        updatedAt: new Date().toISOString(),
+      });
+      showToast(language === 'ar' ? `تم تعديل المخزون إلى: ${newQty}` : `Stock updated: ${newQty}`);
+      await loadPharmacyData();
+    } catch (err: unknown) {
+      handleFirestoreError(err, OperationType.UPDATE, `medicines/${medId}`);
+    }
+  };
+
+  // Create Walk-in / Direct Medicine Order
+  const handleCreateOrder = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (isSubmittingOrder) return;
+    if (!user || !newOrderData.patientName.trim() || !newOrderData.medicineId) return;
+
+    const reqQty = Number(newOrderData.quantity);
+    if (!Number.isFinite(reqQty) || reqQty <= 0) {
+      showToast(language === 'ar' ? 'يجب أن تكون الكمية المطلوبة أكبر من صفر' : 'Quantity must be greater than zero', 'error');
+      return;
+    }
+
+    const med = medicines.find(m => m.id === newOrderData.medicineId && m.pharmacyId === user.uid);
+    if (!med) {
+      showToast(language === 'ar' ? 'الصنف الدوائي غير موجود في مخزون صيدليتك' : 'Medicine not found in your pharmacy inventory', 'error');
+      return;
+    }
+
+    if (isMedicineExpired(med.expiryDate)) {
+      showToast(language === 'ar' ? 'تحذير أمان: لا يمكن صرف دواء منتهي الصلاحية' : 'Safety block: Cannot dispense expired medicine', 'error');
+      return;
+    }
+
+    if (med.quantity < reqQty) {
+      showToast(language === 'ar' ? `الكمية المتوفرة حالياً (${med.quantity}) غير كافية` : 'Insufficient inventory stock', 'error');
+      return;
+    }
+
+    // Prevent rapid duplicate or accidental double-submission for same patient + medicine
+    const normalizedPhone = newOrderData.patientPhone.trim();
+    const normalizedName = newOrderData.patientName.trim().toLowerCase();
+    const recentDuplicate = orders.find((o) => {
+      const samePatient = normalizedPhone ? o.patientPhone === normalizedPhone : o.patientName.trim().toLowerCase() === normalizedName;
+      const sameMedicine = o.items.some((it) => it.medicineId === med.id && it.quantity === reqQty);
+      const isActiveStatus = ['pending', 'accepted', 'preparing', 'ready_for_pickup'].includes(o.status);
+      const createdMs = new Date(o.createdAt).getTime();
+      return samePatient && sameMedicine && isActiveStatus && (Date.now() - createdMs < 60000);
+    });
+
+    if (recentDuplicate) {
+      showToast(
+        language === 'ar' ? 'يوجد طلب مماثل قيد التنفيذ لنفس المريض تم تسجيله للتو' : 'A duplicate active order for this patient & medicine was just recorded',
+        'error'
+      );
+      return;
+    }
+
+    setIsSubmittingOrder(true);
+    try {
+      const ordId = `pord_${user.uid.slice(0, 6)}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+      const now = new Date().toISOString();
+      const patientId = `walkin_${normalizedPhone || Date.now()}`;
+      const itemTotal = med.price * reqQty;
+
+      const orderDoc: PharmacyOrder = {
+        id: ordId,
+        pharmacyId: user.uid,
+        pharmacyName: pharmacyProfile?.pharmacyName || userProfile?.facilityName || 'الصيدلية',
+        patientId,
+        patientName: newOrderData.patientName.trim(),
+        patientPhone: normalizedPhone,
+        items: [
+          {
+            medicineId: med.id,
+            name: med.name,
+            activeIngredient: med.activeIngredient,
+            strength: med.strength,
+            quantity: reqQty,
+            unitPrice: med.price,
+            totalPrice: itemTotal,
+          }
+        ],
+        totalAmount: itemTotal + (newOrderData.orderType === 'delivery' ? (pharmacyProfile?.deliveryFee || 0) : 0),
+        orderType: newOrderData.orderType,
+        deliveryAddress: newOrderData.orderType === 'delivery' ? newOrderData.deliveryAddress.trim() : '',
+        status: isOperable ? 'accepted' : 'pending',
+        pharmacistNotes: newOrderData.pharmacistNotes.trim(),
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      await setDoc(doc(db, 'pharmacy_orders', ordId), sanitizeForFirestore(orderDoc));
+
+      // Decrement stock if operable
+      if (isOperable) {
+        const nextQty = Math.max(0, med.quantity - reqQty);
+        await updateDoc(doc(db, 'medicines', med.id), {
+          quantity: nextQty,
+          isAvailable: nextQty > 0,
+          updatedAt: now,
+        });
+      }
+
+      showToast(language === 'ar' ? 'تم تسجيل وتأكيد طلب الدواء' : 'Medicine order confirmed');
+      setShowNewOrderModal(false);
+      setNewOrderData({
+        patientName: '',
+        patientPhone: '',
+        medicineId: '',
+        quantity: 1,
+        orderType: 'pickup',
+        deliveryAddress: '',
+        pharmacistNotes: '',
+      });
+      await loadPharmacyData();
+    } catch (err: unknown) {
+      handleFirestoreError(err, OperationType.CREATE, 'pharmacy_orders');
+    } finally {
+      setIsSubmittingOrder(false);
+    }
+  };
+
+  // Update Order Status
+  const handleUpdateOrderStatus = async (orderId: string, status: PharmacyOrderStatus, patientId?: string) => {
+    if (!isOperable) {
+      showToast(language === 'ar' ? 'يتطلب إجراء العمليات اعتماد المشرف العام' : 'Super Admin approval required', 'error');
+      return;
+    }
+
+    try {
+      await updateDoc(doc(db, 'pharmacy_orders', orderId), {
+        status,
+        updatedAt: new Date().toISOString(),
+      });
+
+      if (patientId) {
+        await notifyPatientPharmacyOrderStatus({
+          patientUid: patientId,
+          pharmacyName: pharmacyProfile?.pharmacyName || 'الصيدلية',
+          orderId,
+          status: (['preparing', 'ready_for_pickup', 'out_for_delivery', 'completed', 'cancelled'].includes(status)
+            ? (status as any)
+            : 'preparing'),
+        });
+      }
+
+      showToast(language === 'ar' ? `تم تحديث حالة الطلب إلى: ${status}` : `Order status: ${status}`);
+      await loadPharmacyData();
+    } catch (err: unknown) {
+      handleFirestoreError(err, OperationType.UPDATE, `pharmacy_orders/${orderId}`);
+    }
+  };
+
+  const handleConfirmCancelOrder = async () => {
+    if (!cancellingOrder) return;
+    try {
+      await updateDoc(doc(db, 'pharmacy_orders', cancellingOrder.id), {
+        status: 'cancelled',
+        cancellationReason: cancelReason || (language === 'ar' ? 'تم الإلغاء من قبل الصيدلية' : 'Cancelled by pharmacy'),
+        updatedAt: new Date().toISOString(),
+      });
+
+      // Restore quantity
+      for (const item of cancellingOrder.items) {
+        const med = medicines.find(m => m.id === item.medicineId);
+        if (med) {
+          await updateDoc(doc(db, 'medicines', med.id), {
+            quantity: med.quantity + item.quantity,
+            isAvailable: true,
+            updatedAt: new Date().toISOString(),
+          });
+        }
+      }
+
+      showToast(language === 'ar' ? 'تم إلغاء الطلب واسترجاع الكمية للمخزون' : 'Order cancelled and stock restored');
+      setCancellingOrder(null);
+      setCancelReason('');
+      await loadPharmacyData();
+    } catch (err: unknown) {
+      handleFirestoreError(err, OperationType.UPDATE, `pharmacy_orders/${cancellingOrder.id}`);
+    }
+  };
+
+  // Load Real Warehouse Catalog on Selection
+  const handleSelectWarehouse = async (warehouseId: string) => {
+    setSelectedWarehouseId(warehouseId);
+    setWarehouseCatalogSearch('');
+    setLoadingWarehouseCatalog(true);
+    try {
+      const catQuery = query(
+        collection(db, 'wholesale_medicines'),
+        where('wholesalerId', '==', warehouseId)
+      );
+      const snap = await getDocs(catQuery);
+      const items = snap.docs.map((d) => ({ id: d.id, ...d.data() } as WholesaleMedicineItem));
+      setWarehouseCatalog(items);
+    } catch (err) {
+      console.warn('Error loading warehouse catalog:', err);
+      setWarehouseCatalog([]);
+      showToast(language === 'ar' ? 'تعذر تحميل كتالوج المذخر' : 'Failed to load warehouse catalog', 'error');
+    } finally {
+      setLoadingWarehouseCatalog(false);
+    }
+  };
+
+  // Wholesale B2B Procurement Handlers
+  const handleAddToB2bCart = (med: SearchMedicineResult, requestedPacks: number, maxStockPacks?: number) => {
+    const effectiveMaxStock = maxStockPacks ?? med.stockCount;
+    if (effectiveMaxStock !== undefined && effectiveMaxStock <= 0) {
+      showToast(language === 'ar' ? 'هذا المنتج غير متوفر حالياً في مخزون المذخر' : 'This product is currently out of stock', 'error');
+      return;
+    }
+
+    const minQty = med.minOrderQuantity || 1;
+    let finalQty = Math.max(minQty, requestedPacks);
+    if (effectiveMaxStock !== undefined && finalQty > effectiveMaxStock) {
+      finalQty = effectiveMaxStock;
+    }
+
+    setB2bCart((prev) => {
+      const existingIdx = prev.findIndex((item) => item.medicine.id === med.id);
+      if (existingIdx >= 0) {
+        const copy = [...prev];
+        const nextQty = copy[existingIdx].packQuantity + finalQty;
+        const cap = copy[existingIdx].maxStockPacks ?? effectiveMaxStock;
+        copy[existingIdx].packQuantity = cap !== undefined ? Math.min(cap, nextQty) : nextQty;
+        return copy;
+      }
+      return [
+        ...prev,
+        {
+          medicine: med,
+          packQuantity: finalQty,
+          unitPrice: med.priceIqd ?? 0,
+          cartonPrice: med.cartonPriceIqd,
+          maxStockPacks: effectiveMaxStock,
+        },
+      ];
+    });
+
+    showToast(
+      language === 'ar'
+        ? `تمت إضافة (${med.name}) إلى سلة طلبيات الجملة (${finalQty} باكيت)`
+        : `Added ${med.name} (${finalQty} packs) to wholesale cart`
+    );
+  };
+
+  const handleAddWholesaleCatalogItemToCart = (item: WholesaleMedicineItem, requestedPacks: number) => {
+    if (!item.isAvailable || item.stockPacks <= 0 || isMedicineExpired(item.expiryDate)) {
+      showToast(
+        language === 'ar'
+          ? 'لا يمكن طلب منتج غير متاح أو منتهي الصلاحية أو نفد مخزونه'
+          : 'Cannot order unavailable, expired, or out-of-stock item',
+        'error'
+      );
+      return;
+    }
+
+    const mapped: SearchMedicineResult = {
+      id: item.id,
+      sourceType: 'wholesale',
+      name: item.name,
+      nameAr: item.nameAr,
+      activeIngredient: item.activeIngredient,
+      strength: item.strength,
+      dosageForm: item.dosageForm,
+      manufacturer: item.manufacturer,
+      packageSize: item.packSize,
+      facilityId: item.wholesalerId,
+      facilityName: item.wholesalerName,
+      facilityPhone: item.wholesalerPhone,
+      priceIqd: item.wholesalePriceIqd,
+      cartonPriceIqd: item.cartonPriceIqd,
+      minOrderQuantity: item.minOrderQuantity,
+      stockCount: item.stockPacks,
+    };
+
+    handleAddToB2bCart(mapped, requestedPacks, item.stockPacks);
+  };
+
+  const handleRemoveFromB2bCart = (index: number) => {
+    setB2bCart((prev) => prev.filter((_, idx) => idx !== index));
+  };
+
+  const handleSubmitB2bOrder = async () => {
+    if (!user || b2bCart.length === 0 || b2bSubmitting) return;
+    setB2bSubmitting(true);
+
+    try {
+      const now = new Date().toISOString();
+
+      // 1. Live inventory verification against Firestore BEFORE creating orders (prevent overselling & unavailable orders)
+      for (const cartItem of b2bCart) {
+        try {
+          const liveSnap = await getDoc(doc(db, 'wholesale_medicines', cartItem.medicine.id));
+          if (liveSnap.exists()) {
+            const liveMed = liveSnap.data() as WholesaleMedicineItem;
+            if (!liveMed.isAvailable || liveMed.stockPacks <= 0 || isMedicineExpired(liveMed.expiryDate)) {
+              showToast(
+                language === 'ar'
+                  ? `المنتج (${cartItem.medicine.name}) أصبح غير متاح أو منتهي الصلاحية.`
+                  : `${cartItem.medicine.name} is no longer available.`,
+                'error'
+              );
+              setB2bSubmitting(false);
+              return;
+            }
+            if (cartItem.packQuantity > liveMed.stockPacks) {
+              showToast(
+                language === 'ar'
+                  ? `الكمية المطلوبة من (${cartItem.medicine.name}) تتجاوز المتاح حالياً بالمذخر (${liveMed.stockPacks} باكيت).`
+                  : `Requested quantity for ${cartItem.medicine.name} exceeds available stock (${liveMed.stockPacks}).`,
+                'error'
+              );
+              setB2bSubmitting(false);
+              return;
+            }
+          }
+        } catch {
+          // continue cleanly if offline
+        }
+      }
+
+      // 2. Group cart items cleanly by wholesalerId so multi-warehouse carts create proper separate orders
+      const groupsByWholesaler = new Map<string, typeof b2bCart>();
+      for (const it of b2bCart) {
+        const wId = it.medicine.facilityId || '';
+        if (!wId) continue;
+        const arr = groupsByWholesaler.get(wId) || [];
+        arr.push(it);
+        groupsByWholesaler.set(wId, arr);
+      }
+
+      if (groupsByWholesaler.size === 0) {
+        showToast(language === 'ar' ? 'بيانات المذخر غير مكتملة للأصناف المختارة' : 'Missing warehouse metadata', 'error');
+        setB2bSubmitting(false);
+        return;
+      }
+
+      // 3. Duplicate-order guard (identical pending order to same warehouse within 60s)
+      for (const [wId, groupItems] of groupsByWholesaler.entries()) {
+        const groupTotal = groupItems.reduce((sum, it) => sum + it.unitPrice * it.packQuantity, 0);
+        const dup = b2bOrders.find((ord) => {
+          if (ord.wholesalerId !== wId || ord.status !== 'pending') return false;
+          const ageMs = Date.now() - new Date(ord.createdAt).getTime();
+          if (ageMs > 60000) return false;
+          if (ord.items.length !== groupItems.length || ord.totalAmountIqd !== groupTotal) return false;
+          return groupItems.every((gi) =>
+            ord.items.some((oi) => oi.medicineId === gi.medicine.id && oi.packQuantity === gi.packQuantity)
+          );
+        });
+        if (dup) {
+          showToast(
+            language === 'ar'
+              ? 'تم رصد طلبية مطابقة قيد التدقيق أُرسلت للتو لنفس المذخر.'
+              : 'An identical pending order was just submitted to this warehouse.',
+            'error'
+          );
+          setB2bSubmitting(false);
+          return;
+        }
+      }
+
+      const createdOrders: WholesaleOrder[] = [];
+
+      for (const [wId, groupItems] of groupsByWholesaler.entries()) {
+        const primary = groupItems[0].medicine;
+        const warehouseMeta = registeredWholesalers.find((w) => w.id === wId);
+        const orderId = `word_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+        const totalAmount = groupItems.reduce((sum, it) => sum + it.unitPrice * it.packQuantity, 0);
+
+        const items: WholesaleOrderItem[] = groupItems.map((it) => ({
+          medicineId: it.medicine.id,
+          name: it.medicine.name,
+          activeIngredient: it.medicine.activeIngredient,
+          strength: it.medicine.strength,
+          batchNumber: `BAT-${Date.now().toString().slice(-6)}`,
+          packQuantity: it.packQuantity,
+          unitWholesalePriceIqd: it.unitPrice,
+          totalPriceIqd: it.unitPrice * it.packQuantity,
+        }));
+
+        const wholesaleOrderPayload: WholesaleOrder = {
+          id: orderId,
+          wholesalerId: wId,
+          wholesalerName: warehouseMeta?.name || primary.facilityName || 'مذخر أدوية معتمد',
+          pharmacyId: user.uid,
+          pharmacyName: pharmacyProfile?.pharmacyName || userProfile?.facilityName || 'صيدليتنا المعتمدة',
+          pharmacyPhone: pharmacyProfile?.phone || userProfile?.phone || '',
+          pharmacyAddress: pharmacyProfile?.address || pharmacyProfile?.governorate || '',
+          pharmacyGovernorate: pharmacyProfile?.governorate || 'بغداد (Baghdad)',
+          items,
+          totalAmountIqd: totalAmount,
+          status: 'pending',
+          paymentMethod: 'cash_on_delivery',
+          pharmacyNotes: b2bNotes,
+          invoiceNumber: `INV-B2B-${Date.now().toString().slice(-6)}`,
+          createdAt: now,
+          updatedAt: now,
+        };
+
+        try {
+          await setDoc(doc(db, 'wholesale_orders', orderId), sanitizeForFirestore(wholesaleOrderPayload));
+        } catch (err: unknown) {
+          handleFirestoreError(err, OperationType.CREATE, `wholesale_orders/${orderId}`);
+        }
+
+        await logAuditEvent({
+          action: 'wholesale_order_created',
+          category: 'wholesale_b2b',
+          actorUid: user.uid,
+          actorName: wholesaleOrderPayload.pharmacyName,
+          actorRole: 'pharmacy',
+          targetUid: wholesaleOrderPayload.wholesalerId,
+          targetName: wholesaleOrderPayload.wholesalerName,
+          targetRole: 'wholesaler',
+          resourceId: orderId,
+          resourceNumber: wholesaleOrderPayload.invoiceNumber,
+          status: 'pending',
+          details: `طلب شراء بالجملة رقم ${wholesaleOrderPayload.invoiceNumber} بقيمة ${totalAmount.toLocaleString()} د.ع يضم ${items.length} أصناف دوائية.`
+        });
+
+        if (wholesaleOrderPayload.wholesalerId) {
+          await notifyWholesalerNewOrder({
+            wholesalerUid: wholesaleOrderPayload.wholesalerId,
+            pharmacyName: wholesaleOrderPayload.pharmacyName,
+            orderId,
+            itemCount: items.length,
+          });
+        }
+
+        createdOrders.push(wholesaleOrderPayload);
+      }
+
+      setB2bOrders((prev) => [...createdOrders, ...prev]);
+      setB2bCart([]);
+      setB2bNotes('');
+      setShowB2bCartModal(false);
+      showToast(
+        language === 'ar'
+          ? `تم إرسال (${createdOrders.length}) طلبية شراء بالجملة للمذخر وتوثيقها بنجاح`
+          : `${createdOrders.length} wholesale B2B order(s) dispatched to warehouse`
+      );
+    } catch (err: unknown) {
+      console.error('Error submitting B2B order:', err);
+      showToast(language === 'ar' ? 'فشل إرسال طلبية الجملة' : 'Failed to submit order', 'error');
+    } finally {
+      setB2bSubmitting(false);
+    }
+  };
+
+  const handleImportDeliveredOrderToStock = async (order: WholesaleOrder) => {
+    if (!user) return;
+    try {
+      const now = new Date().toISOString();
+      for (const item of order.items) {
+        const existing = medicines.find(
+          (m) => m.name.toLowerCase().includes(item.name.toLowerCase()) || m.activeIngredient.toLowerCase() === item.activeIngredient.toLowerCase()
+        );
+
+        if (existing) {
+          await updateDoc(doc(db, 'medicines', existing.id), {
+            quantity: existing.quantity + item.packQuantity,
+            isAvailable: true,
+            updatedAt: now,
+          });
+        } else {
+          const newMedId = `med_${user.uid.slice(0, 5)}_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`;
+          const retailPrice = Math.round(item.unitWholesalePriceIqd * 1.15 / 250) * 250;
+          const newMedicine: MedicineItem = {
+            id: newMedId,
+            pharmacyId: user.uid,
+            pharmacyName: pharmacyProfile?.pharmacyName || userProfile?.facilityName || 'صيدليتنا',
+            name: item.name,
+            activeIngredient: item.activeIngredient,
+            brand: item.name.split(' ')[0],
+            manufacturer: 'معتمد (وزارة الصحة)',
+            strength: item.strength,
+            dosageForm: 'Tablets (أقراص)',
+            packageSize: 'علبة أصلية',
+            price: retailPrice,
+            quantity: item.packQuantity,
+            minStockAlert: 10,
+            expiryDate: new Date(Date.now() + 700 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+            requiresPrescription: false,
+            isAvailable: true,
+            createdAt: now,
+            updatedAt: now,
+          };
+          await setDoc(doc(db, 'medicines', newMedId), sanitizeForFirestore(newMedicine));
+        }
+      }
+
+      showToast(
+        language === 'ar'
+          ? 'تم استلام الشحنة وتوريد كافة الأصناف للمخزون بنجاح!'
+          : 'Delivered batch ingested into local inventory!'
+      );
+      await loadPharmacyData();
+    } catch (err: unknown) {
+      console.error('Error importing order to stock:', err);
+    }
+  };
+
+  // Handle Pharmacy Logo Upload via Cloud Storage
+  const handlePharmacyLogoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      if (user?.uid) {
+        const uploaded = await uploadMedicalDocumentFile(file, {
+          userId: user.uid,
+          category: 'facility_logos',
+        });
+        setEditProfileForm(prev => ({ ...prev, logoUrl: uploaded.downloadUrl }));
+        showToast(language === 'ar' ? 'تم رفع شعار الصيدلية بنجاح' : 'Pharmacy logo uploaded successfully');
+        return;
+      }
+      const res = await validateAndCompressImage(file, { maxWidth: 400, maxHeight: 400, quality: 0.82 });
+      if (res.valid && res.dataUrl) {
+        setEditProfileForm(prev => ({ ...prev, logoUrl: res.dataUrl! }));
+        showToast(language === 'ar' ? 'تم تجهيز وضغط الشعار بنجاح' : 'Logo compressed and ready');
+      } else {
+        showToast(res.error || (language === 'ar' ? 'تعذر معالجة صورة الشعار' : 'Failed to compress logo'), 'error');
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : (language === 'ar' ? 'حدث خطأ أثناء معالجة الشعار' : 'Error processing logo');
+      showToast(msg, 'error');
+    }
+  };
+
+  // Save Pharmacy Settings
+  const handleSavePharmacySettings = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user) return;
+
+    try {
+      const now = new Date().toISOString();
+      const updatedProfile: PharmacyProfile = {
+        pharmacyId: user.uid,
+        pharmacyName: editProfileForm.pharmacyName,
+        ownerName: editProfileForm.ownerName,
+        licenseNumber: editProfileForm.licenseNumber || pharmacyProfile?.licenseNumber || '',
+        phone: editProfileForm.phone,
+        whatsapp: editProfileForm.whatsapp,
+        address: editProfileForm.address,
+        governorate: editProfileForm.governorate,
+        mapsUrl: editProfileForm.mapsUrl,
+        workingHours: editProfileForm.workingHours,
+        logoUrl: editProfileForm.logoUrl,
+        deliveryAvailable: editProfileForm.deliveryAvailable,
+        deliveryFee: Number(editProfileForm.deliveryFee),
+        nightDuty: editProfileForm.nightDuty,
+        bio: editProfileForm.bio,
+        createdAt: pharmacyProfile?.createdAt || now,
+        updatedAt: now,
+      };
+
+      await setDoc(doc(db, 'pharmacy_profiles', user.uid), sanitizeForFirestore(updatedProfile));
+
+      // Sync non-privileged user profile fields
+      await updateDoc(doc(db, 'users', user.uid), {
+        displayName: editProfileForm.pharmacyName,
+        facilityName: editProfileForm.pharmacyName,
+        governorate: editProfileForm.governorate,
+        phone: editProfileForm.phone,
+        updatedAt: now,
+      });
+
+      // Log audit event
+      await logAuditEvent({
+        action: 'profile_updated',
+        category: 'profiles',
+        actorUid: user.uid,
+        actorName: editProfileForm.pharmacyName,
+        actorRole: 'pharmacy',
+        resourceId: user.uid,
+        resourceNumber: editProfileForm.licenseNumber || 'PHARM-IQ',
+        status: 'completed',
+        details: `تحديث بيانات ومعلومات صيدلية ${editProfileForm.pharmacyName}، العنوان: ${editProfileForm.address}`
+      });
+
+      showToast(language === 'ar' ? 'تم حفظ بيانات وإعدادات الصيدلية بنجاح' : 'Pharmacy profile saved');
+      await loadPharmacyData();
+      await refreshProfile();
+    } catch (err: unknown) {
+      handleFirestoreError(err, OperationType.UPDATE, `pharmacy_profiles/${user.uid}`);
+    }
+  };
+
+  // Filtered Medicines (Searching by brand, trade name, or active ingredient)
+  const filteredMedicines = useMemo(() => {
+    return medicines.filter((m) => {
+      // Search Query
+      if (searchQuery.trim()) {
+        const queryStr = searchQuery.toLowerCase().trim();
+        const matchesName = m.name.toLowerCase().includes(queryStr);
+        const matchesIngredient = m.activeIngredient.toLowerCase().includes(queryStr);
+        const matchesBrand = m.brand?.toLowerCase().includes(queryStr);
+        const matchesManufacturer = m.manufacturer?.toLowerCase().includes(queryStr);
+        if (!matchesName && !matchesIngredient && !matchesBrand && !matchesManufacturer) {
+          return false;
+        }
+      }
+
+      // Dosage Form Filter
+      if (dosageFormFilter !== 'all' && m.dosageForm !== dosageFormFilter) {
+        return false;
+      }
+
+      // Medicine Category Filter
+      if (medicineCategoryFilter !== 'all' && (m.category || 'Other (أخرى)') !== medicineCategoryFilter) {
+        return false;
+      }
+
+      // Inventory Status Filter
+      if (inventoryStatusFilter === 'in_stock') {
+        if (m.quantity <= 0 || isMedicineExpired(m.expiryDate)) return false;
+      } else if (inventoryStatusFilter === 'low_stock') {
+        if (m.quantity > (m.minStockAlert || 5) || isMedicineExpired(m.expiryDate)) return false;
+      } else if (inventoryStatusFilter === 'expired') {
+        if (!isMedicineExpired(m.expiryDate)) return false;
+      } else if (inventoryStatusFilter === 'prescription') {
+        if (!m.requiresPrescription) return false;
+      }
+
+      return true;
+    });
+  }, [medicines, searchQuery, dosageFormFilter, medicineCategoryFilter, inventoryStatusFilter]);
+
+  // Filtered Orders
+  const filteredOrders = orders.filter((o) => {
+    if (orderFilter === 'all') return true;
+    return o.status === orderFilter;
+  });
+
+  // Derived Metrics
+  const lowStockCount = medicines.filter(m => m.quantity <= (m.minStockAlert || 5) && !isMedicineExpired(m.expiryDate)).length;
+  const expiredCount = medicines.filter(m => isMedicineExpired(m.expiryDate)).length;
+  const pendingOrdersCount = orders.filter(o => o.status === 'pending').length;
+  const deliveryOrdersCount = orders.filter(o => o.orderType === 'delivery').length;
+
+  return (
+    <div className="space-y-8 animate-in fade-in duration-200">
+      {/* Toast Feedback */}
+      {feedbackMsg && (
+        <div className={`p-4 rounded-2xl flex items-center gap-3 text-sm font-bold shadow-lg animate-in slide-in-from-top-3 ${
+          feedbackMsg.type === 'success' 
+            ? 'bg-emerald-600 text-white' 
+            : 'bg-red-600 text-white'
+        }`}>
+          <CheckCircle2 size={18} />
+          <span>{feedbackMsg.text}</span>
+        </div>
+      )}
+
+      {/* Accreditation Warning if unapproved */}
+      {!isOperable && (
+        <div className="p-5 rounded-2xl bg-amber-50 border border-amber-300 text-amber-900 flex items-start gap-4">
+          <AlertTriangle size={24} className="text-amber-600 shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <h4 className="font-bold text-sm">
+              {language === 'ar' ? 'الصيدلية قيد المراجعة والاعتماد النقابي' : 'Pharmacy Accreditation Under Review'}
+            </h4>
+            <p className="text-xs text-amber-800 mt-1 leading-relaxed">
+              {language === 'ar'
+                ? 'وفقاً لضوابط نقابة صيادلة العراق ووزارة الصحة، يتم تقييد قبول وتجهيز طلبات الأدوية وتعديل المخزون حتى يتم تدقيق إجازة ممارسة المهنة من قبل المشرف العام للمنصة.'
+                : 'Pursuant to Iraqi Pharmacists Syndicate regulations, dispensing orders and stock listings are restricted until license approval by Super Admin.'}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Pharmacy Brand Banner */}
+      <div className="bg-gradient-to-r from-[#002244] via-[#004d40] to-[#00796b] rounded-3xl p-6 sm:p-8 text-white shadow-xl relative overflow-hidden">
+        <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
+          <div className="flex items-start sm:items-center gap-4">
+            {pharmacyProfile?.logoUrl ? (
+              <img 
+                src={pharmacyProfile.logoUrl} 
+                alt="Logo" 
+                className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl object-cover bg-white/10 backdrop-blur-md border border-white/20 shadow-md shrink-0" 
+              />
+            ) : (
+              <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl bg-white/10 backdrop-blur-md border border-white/20 flex items-center justify-center text-white shadow-md shrink-0">
+                <Pill size={36} className="text-teal-300" />
+              </div>
+            )}
+            <div>
+              <div className="inline-flex items-center gap-2 px-2.5 py-0.5 rounded-full bg-teal-500/20 text-teal-300 border border-teal-400/30 text-xs font-bold mb-1.5">
+                <CheckCircle2 size={13} />
+                <span>{isOperable ? (language === 'ar' ? 'صيدلية معتمدة وموثقة نقابياً' : 'Certified Pharmacy') : (language === 'ar' ? 'قيد التدقيق الإداري' : 'Pending Verification')}</span>
+              </div>
+              <h1 className="text-2xl sm:text-3xl font-black tracking-tight">
+                {pharmacyProfile?.pharmacyName || userProfile?.facilityName || userProfile?.displayName || (language === 'ar' ? 'الصيدلية المعتمدة' : 'Accredited Pharmacy')}
+              </h1>
+              <div className="flex flex-wrap items-center gap-3 text-xs sm:text-sm text-slate-200 mt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const pharmId = userProfile?.accountId || pharmacyProfile?.pharmacyId || generateFacilityOrUserId('pharmacy', user?.uid || 'guest');
+                    navigator.clipboard.writeText(pharmId);
+                    showToast(language === 'ar' ? `تم نسخ معرف الصيدلية (${pharmId})` : `Pharmacy ID copied (${pharmId})`);
+                  }}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 font-mono text-xs font-bold text-white transition-colors cursor-pointer"
+                  title={language === 'ar' ? 'انقر لنسخ المعرف' : 'Click to copy ID'}
+                >
+                  <Copy size={12} className="text-teal-300" />
+                  <span>ID: {userProfile?.accountId || pharmacyProfile?.pharmacyId || generateFacilityOrUserId('pharmacy', user?.uid || 'guest')}</span>
+                </button>
+                <span className="opacity-40">·</span>
+                <span>{language === 'ar' ? 'الصيدلي المسؤول:' : 'Pharmacist:'} {pharmacyProfile?.ownerName}</span>
+                <span className="opacity-40">·</span>
+                <span>{language === 'ar' ? 'رقم الإجازة:' : 'License:'} {pharmacyProfile?.licenseNumber || userProfile?.licenseNumber || 'PHARM-IQ'}</span>
+                <span className="opacity-40">·</span>
+                <span className="flex items-center gap-1">
+                  <MapPin size={13} className="text-teal-300" />
+                  <span>{pharmacyProfile?.address || userProfile?.facilityName || 'العراق'}</span>
+                </span>
+                <span className="opacity-40">·</span>
+                <span className="flex items-center gap-1">
+                  <Clock size={13} className="text-teal-300" />
+                  <span>{pharmacyProfile?.workingHours || '8:00 AM - 12:00 AM'}</span>
+                </span>
+                {pharmacyProfile?.deliveryAvailable && (
+                  <>
+                    <span className="opacity-40">·</span>
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-teal-400/20 text-teal-200 text-xs font-bold">
+                      <Truck size={12} />
+                      <span>{language === 'ar' ? 'خدمة توصيل' : 'Delivery'}</span>
+                    </span>
+                  </>
+                )}
+                {pharmacyProfile?.nightDuty && (
+                  <>
+                    <span className="opacity-40">·</span>
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-400/20 text-amber-200 text-xs font-bold">
+                      <span>{language === 'ar' ? 'صيدلية خافرة' : 'Night Duty'}</span>
+                    </span>
+                  </>
+                )}
+                {pharmacyProfile?.mapsUrl && (
+                  <>
+                    <span className="opacity-40">·</span>
+                    <a 
+                      href={pharmacyProfile.mapsUrl} 
+                      target="_blank" 
+                      rel="noopener noreferrer" 
+                      className="text-teal-200 hover:text-white underline flex items-center gap-1"
+                    >
+                      <ExternalLink size={12} />
+                      <span>{language === 'ar' ? 'خرائط Google' : 'Maps'}</span>
+                    </a>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                setRefreshing(true);
+                loadPharmacyData();
+              }}
+              className="p-2.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 text-white transition-colors flex items-center gap-2 text-xs font-bold cursor-pointer"
+              title="تحديث البيانات"
+            >
+              <RefreshCw size={15} className={refreshing ? 'animate-spin' : ''} />
+              <span className="hidden sm:inline">{language === 'ar' ? 'تحديث' : 'Sync'}</span>
+            </button>
+            <button
+              onClick={() => {
+                resetMedicineForm();
+                setEditingMedicine(null);
+                setShowNewMedicineModal(true);
+              }}
+              className="px-4 py-2.5 rounded-xl bg-white text-[#004d40] hover:bg-slate-100 font-bold text-xs sm:text-sm shadow-md transition-all flex items-center gap-2 cursor-pointer"
+            >
+              <Plus size={16} />
+              <span>{language === 'ar' ? 'إضافة دواء جديد' : 'Add Medicine'}</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Safety Notice Banner */}
+      <div className="p-4 rounded-2xl bg-teal-50 border border-teal-200 text-teal-950 flex items-center gap-3 text-xs leading-relaxed">
+        <HeartPulse size={20} className="text-[#00796b] shrink-0" />
+        <div>
+          <strong>{language === 'ar' ? 'معايير السلامة الدوائية:' : 'Pharmaceutical Safety Notice:'}</strong>{' '}
+          {language === 'ar'
+            ? 'الأدوية منتهية الصلاحية يتم حجبها تلقائياً عن التوفر. الأدوية التي تحمل وسم (وصفة طبية إلزامية) تتطلب تدقيق الوصفة الطبية الصادرة من طبيب معتمد ولا يجوز صرفها دون تحقق.'
+            : 'Expired medicines are automatically suppressed from availability. Prescription-required drugs mandate physician verification before dispensing.'}
+        </div>
+      </div>
+
+      {/* Pharmacy Workspace Navigation Tabs */}
+      <div className="flex items-center gap-1 p-1.5 bg-slate-200/80 rounded-2xl overflow-x-auto text-xs font-bold">
+        {[
+          { id: 'dashboard', labelAr: 'لوحة المؤشرات', labelEn: 'Dashboard', icon: Activity },
+          { id: 'prescriptions', labelAr: `الوصفات الإلكترونية المحالة (${incomingPrescriptions.length})`, labelEn: `e-Prescriptions (${incomingPrescriptions.length})`, icon: FileText },
+          { id: 'catalog', labelAr: `دليل ومحرك بحث الأدوية (${medicines.length})`, labelEn: `Medicine Catalog (${medicines.length})`, icon: Pill },
+          { id: 'inventory', labelAr: 'إدارة المخزون والصلاحية', labelEn: 'Inventory & Expiry', icon: Package },
+          { id: 'orders', labelAr: `طلبات وتجهيز الوصفات (${orders.length})`, labelEn: `Medicine Orders (${orders.length})`, icon: ShoppingBag },
+          { id: 'wholesale_b2b', labelAr: `سوق الجملة والمذاخر (${b2bOrders.length})`, labelEn: `Wholesale Market (${b2bOrders.length})`, icon: Building2 },
+          { id: 'messages', labelAr: 'الرسائل الخاصة', labelEn: 'Messages', icon: MessageSquare },
+          { id: 'settings', labelAr: 'إعدادات الصيدلية والترخيص', labelEn: 'Pharmacy Profile & Hours', icon: Settings },
+        ].map((tab) => {
+          const Icon = tab.icon;
+          const isActive = activeTab === tab.id;
+          return (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id as any)}
+              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl transition-all cursor-pointer whitespace-nowrap ${
+                isActive
+                  ? 'bg-white text-[#00796b] shadow-sm font-extrabold'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
+              }`}
+            >
+              <Icon size={16} className={isActive ? 'text-[#00796b]' : 'text-slate-400'} />
+              <span>{language === 'ar' ? tab.labelAr : tab.labelEn}</span>
+              {tab.id === 'orders' && pendingOrdersCount > 0 && (
+                <span className="w-5 h-5 rounded-full bg-teal-600 text-white text-[10px] flex items-center justify-center font-mono">
+                  {pendingOrdersCount}
+                </span>
+              )}
+              {tab.id === 'inventory' && (lowStockCount > 0 || expiredCount > 0) && (
+                <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* TAB 1: DASHBOARD OVERVIEW */}
+      {activeTab === 'dashboard' && (
+        <div className="space-y-8">
+          {/* Quick Prescription Number & Scoped Customer Lookup Widget */}
+          <div className="p-5 rounded-3xl bg-gradient-to-r from-[#00332c] via-[#004d40] to-[#00796b] text-white shadow-md flex flex-col md:flex-row items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-2xl bg-white/10 backdrop-blur-sm border border-white/20 flex items-center justify-center shrink-0">
+                <FileCheck2 size={24} className="text-teal-300" />
+              </div>
+              <div>
+                <h3 className="font-bold text-base text-white">
+                  {language === 'ar' ? 'استعلام سريع برقم الوصفة أو اسم ورقم هاتف العميل' : 'Quick Lookup by Rx Number or Customer Name / Phone'}
+                </h3>
+                <p className="text-xs text-teal-100">
+                  {language === 'ar' ? 'استعلام عن الوصفات المرقمة أو عملاء صيدليتك المرتبطين بالاسم الكامل والهاتف' : 'Lookup digital prescriptions by Rx code or search linked pharmacy customers by name/phone'}
+                </p>
+              </div>
+            </div>
+
+            <form onSubmit={handleLookupPrescription} className="w-full md:w-auto flex items-center gap-2">
+              <div className="relative flex-1 md:w-80">
+                <Search size={16} className="absolute start-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  value={rxLookupCode}
+                  onChange={(e) => setRxLookupCode(e.target.value)}
+                  placeholder={language === 'ar' ? 'رقم الوصفة (RX-...) أو اسم / هاتف العميل...' : 'Rx number (RX-...) or Customer name/phone...'}
+                  className="w-full ps-9 pe-3 py-2.5 rounded-xl bg-white text-slate-900 placeholder:text-slate-400 text-xs focus:ring-2 focus:ring-teal-400 outline-none"
+                />
+              </div>
+              <button
+                type="submit"
+                className="px-5 py-2.5 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-xs shrink-0 transition-colors shadow-sm cursor-pointer flex items-center gap-1.5"
+              >
+                <Search size={14} />
+                <span>{language === 'ar' ? 'استعلام' : 'Search'}</span>
+              </button>
+            </form>
+          </div>
+
+          {/* Metrics Counters */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-xs">
+              <span className="text-xs text-slate-500 block mb-1 font-semibold">{language === 'ar' ? 'إجمالي الأدوية بالمخزون' : 'Total Cataloged'}</span>
+              <div className="text-2xl sm:text-3xl font-black text-slate-900 font-mono">{medicines.length}</div>
+              <span className="text-[11px] text-slate-400 mt-1 block">{language === 'ar' ? 'أصناف دوائية مسجلة' : 'Registered products'}</span>
+            </div>
+
+            <div className="p-5 rounded-2xl bg-white border border-amber-200 shadow-xs">
+              <span className="text-xs text-amber-700 block mb-1 font-semibold">{language === 'ar' ? 'تنبيه وشك النفاد (مخزون حرج)' : 'Low Stock Alert'}</span>
+              <div className="text-2xl sm:text-3xl font-black text-amber-800 font-mono">{lowStockCount}</div>
+              <span className="text-[11px] text-amber-600 mt-1 block">{language === 'ar' ? 'أصناف بحاجة لإعادة طلب' : 'Requires restocking'}</span>
+            </div>
+
+            <div className="p-5 rounded-2xl bg-white border border-red-200 shadow-xs">
+              <span className="text-xs text-red-700 block mb-1 font-semibold">{language === 'ar' ? 'أدوية منتهية الصلاحية' : 'Expired Stock'}</span>
+              <div className="text-2xl sm:text-3xl font-black text-red-800 font-mono">{expiredCount}</div>
+              <span className="text-[11px] text-red-600 mt-1 block">{language === 'ar' ? 'محجوبة وممنوعة من الصرف' : 'Quarantined & blocked'}</span>
+            </div>
+
+            <div className="p-5 rounded-2xl bg-white border border-teal-200 shadow-xs">
+              <span className="text-xs text-teal-700 block mb-1 font-semibold">{language === 'ar' ? 'طلبات الأدوية والوصفات' : 'Orders & Inquiries'}</span>
+              <div className="text-2xl sm:text-3xl font-black text-teal-800 font-mono">{orders.length}</div>
+              <span className="text-[11px] text-teal-600 mt-1 block">{language === 'ar' ? `${pendingOrdersCount} بانتظار التجهيز` : `${pendingOrdersCount} pending`}</span>
+            </div>
+          </div>
+
+          {/* Low Stock or Expired Warnings */}
+          {(lowStockCount > 0 || expiredCount > 0) && (
+            <div className="p-5 rounded-2xl bg-amber-50 border border-amber-200 text-amber-950 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <AlertCircle size={24} className="text-amber-700 shrink-0" />
+                <div>
+                  <h4 className="font-bold text-sm">
+                    {language === 'ar' ? 'تنبيهات سلامة المخزون الصيدلاني' : 'Pharmaceutical Inventory Alerts'}
+                  </h4>
+                  <p className="text-xs text-amber-800 mt-0.5">
+                    {expiredCount > 0 && (
+                      <span className="block font-bold text-red-700">
+                        • {language === 'ar' ? `يوجد (${expiredCount}) أدوية منتهية الصلاحية تم حجبها فورياً حفاظاً على صحة المرضى.` : `(${expiredCount}) expired medicines blocked from patient view.`}
+                      </span>
+                    )}
+                    {lowStockCount > 0 && (
+                      <span className="block text-amber-800">
+                        • {language === 'ar' ? `يوجد (${lowStockCount}) أصناف دوائية شارف مخزونها على النفاد.` : `(${lowStockCount}) items have low inventory.`}
+                      </span>
+                    )}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                onClick={() => setActiveTab('inventory')}
+                className="px-4 py-2 rounded-xl bg-amber-700 hover:bg-amber-800 text-white font-bold text-xs transition-colors shrink-0 cursor-pointer"
+              >
+                {language === 'ar' ? 'فحص المخزون الآن' : 'Review Inventory'}
+              </button>
+            </div>
+          )}
+
+          {/* Quick 2-Column Split: Recent Orders & Quick Medicine Search */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+            {/* Orders Queue */}
+            <div className="lg:col-span-7 bg-white rounded-3xl p-6 border border-slate-200 shadow-sm">
+              <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-100">
+                <div className="flex items-center gap-2">
+                  <ShoppingBag size={18} className="text-[#00796b]" />
+                  <h3 className="font-bold text-base text-slate-900">{language === 'ar' ? 'طابور طلبات الأدوية الأخيرة' : 'Recent Medicine Orders'}</h3>
+                </div>
+                <button
+                  onClick={() => setActiveTab('orders')}
+                  className="text-xs font-bold text-[#00796b] hover:underline cursor-pointer"
+                >
+                  {language === 'ar' ? 'عرض الكل' : 'View All'}
+                </button>
+              </div>
+
+              {orders.length === 0 ? (
+                <div className="py-12 text-center text-slate-400">
+                  <Package size={36} className="mx-auto mb-2 opacity-30" />
+                  <p className="text-xs">{language === 'ar' ? 'لا توجد طلبات أدوية مسجلة حالياً' : 'No medicine orders yet'}</p>
+                  <button
+                    onClick={() => setShowNewOrderModal(true)}
+                    className="mt-3 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold cursor-pointer"
+                  >
+                    {language === 'ar' ? 'تسجيل طلب مباشر' : 'Intake Order'}
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {orders.slice(0, 5).map((o) => (
+                    <div
+                      key={o.id}
+                      className="p-3.5 rounded-2xl bg-slate-50 border border-slate-100 flex items-center justify-between gap-3 hover:bg-slate-100/80 transition-colors"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-teal-100 text-[#00796b] flex items-center justify-center font-bold text-xs shrink-0">
+                          <Pill size={18} />
+                        </div>
+                        <div>
+                          <div className="font-bold text-sm text-slate-900 flex items-center gap-2">
+                            <span>{o.patientName}</span>
+                            {o.orderType === 'delivery' && (
+                              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-100 text-blue-800 flex items-center gap-1">
+                                <Truck size={10} />
+                                <span>{language === 'ar' ? 'توصيل' : 'Delivery'}</span>
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-xs text-slate-500 flex items-center gap-2 mt-0.5">
+                            <span>{o.items.map(i => i.name).join(', ')}</span>
+                            <span>·</span>
+                            <span className="font-mono font-bold text-teal-800">{o.totalAmount.toLocaleString()} د.ع</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                          o.status === 'accepted'
+                            ? 'bg-blue-100 text-blue-800'
+                            : o.status === 'pending'
+                            ? 'bg-amber-100 text-amber-800'
+                            : o.status === 'completed'
+                            ? 'bg-emerald-100 text-emerald-800'
+                            : 'bg-slate-200 text-slate-700'
+                        }`}>
+                          {o.status}
+                        </span>
+
+                        <button
+                          onClick={() => setSelectedOrderDetails(o)}
+                          className="p-1.5 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold"
+                          title="عرض التفاصيل"
+                        >
+                          <Eye size={14} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Top Moving / Essential Medicines */}
+            <div className="lg:col-span-5 bg-white rounded-3xl p-6 border border-slate-200 shadow-sm flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-100">
+                  <div className="flex items-center gap-2">
+                    <HeartPulse size={18} className="text-[#00796b]" />
+                    <h3 className="font-bold text-base text-slate-900">{language === 'ar' ? 'الأصناف الدوائية الأساسية' : 'Essential Products'}</h3>
+                  </div>
+                  <button
+                    onClick={() => setActiveTab('catalog')}
+                    className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold"
+                  >
+                    <Search size={14} />
+                  </button>
+                </div>
+
+                <div className="space-y-2.5">
+                  {medicines.slice(0, 5).map((m) => (
+                    <div key={m.id} className="p-3 rounded-xl bg-slate-50 border border-slate-100 flex items-center justify-between text-xs">
+                      <div>
+                        <div className="font-bold text-slate-900">{m.name}</div>
+                        <div className="text-slate-500 text-[11px] font-mono">{m.activeIngredient}</div>
+                      </div>
+                      <div className="text-end">
+                        <div className="font-bold font-mono text-teal-800">{m.price.toLocaleString()} د.ع</div>
+                        <div className="text-[10px] text-slate-400">
+                          {language === 'ar' ? `الرصيد: ${m.quantity}` : `Stock: ${m.quantity}`}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="mt-6 pt-4 border-t border-slate-100">
+                <div className="text-xs text-slate-500 flex items-center justify-between">
+                  <span>{language === 'ar' ? 'ساعات الدوام اليومي:' : 'Working Hours:'}</span>
+                  <span className="font-bold text-slate-800">{pharmacyProfile?.workingHours || '8:00 AM - 12:00 AM'}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 2: MEDICINE CATALOG & PATIENT SEARCH ENGINE */}
+      {activeTab === 'catalog' && (
+        <div className="bg-white rounded-3xl p-6 sm:p-8 border border-slate-200 shadow-sm space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">
+            <div>
+              <h2 className="text-xl font-bold text-slate-900">
+                {language === 'ar' ? 'دليل الأدوية ومحرك البحث العلمي والتجاري' : 'Medicine Catalog & Generic Search Engine'}
+              </h2>
+              <p className="text-xs text-slate-500 mt-1">
+                {language === 'ar'
+                  ? 'البحث السريع بالاسم التجاري أو المادة الفعالة العلمية للوصول للبدائل والمثائل الدوائية والتسعيرة بالدينار.'
+                  : 'Search by trade brand or generic active ingredient to find matching products and alternatives.'}
+              </p>
+            </div>
+
+            <button
+              onClick={() => {
+                resetMedicineForm();
+                setEditingMedicine(null);
+                setShowNewMedicineModal(true);
+              }}
+              className="px-4 py-2.5 rounded-xl bg-[#00796b] hover:bg-teal-800 text-white font-bold text-xs flex items-center gap-2 cursor-pointer shadow-xs"
+            >
+              <Plus size={16} />
+              <span>{language === 'ar' ? 'إضافة دواء جديد' : 'Add Medicine'}</span>
+            </button>
+          </div>
+
+          {/* Search Bar & Multi-Criteria Filters */}
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-3 text-xs">
+            <div className="md:col-span-4 relative">
+              <Search size={16} className="absolute top-3.5 start-3 text-slate-400" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder={language === 'ar' ? 'ابحث بالاسم التجاري أو المادة الفعالة...' : 'Search trade name, generic or brand...'}
+                className="w-full ps-9 pe-3 py-2.5 rounded-xl border border-slate-200 text-xs sm:text-sm focus:ring-2 focus:ring-[#00796b]"
+              />
+            </div>
+
+            <div className="md:col-span-3">
+              <select
+                value={medicineCategoryFilter}
+                onChange={(e) => setMedicineCategoryFilter(e.target.value)}
+                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-xs sm:text-sm bg-white"
+              >
+                <option value="all">{language === 'ar' ? 'كافة الفئات العلاجية' : 'All Categories'}</option>
+                {medicineCategoriesList.map((c, idx) => (
+                  <option key={idx} value={c}>{c}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="md:col-span-2">
+              <select
+                value={dosageFormFilter}
+                onChange={(e) => setDosageFormFilter(e.target.value)}
+                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-xs sm:text-sm bg-white"
+              >
+                <option value="all">{language === 'ar' ? 'كافة الأشكال' : 'All Forms'}</option>
+                {dosageFormsList.map((f, idx) => (
+                  <option key={idx} value={f}>{f}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="md:col-span-3">
+              <select
+                value={inventoryStatusFilter}
+                onChange={(e) => setInventoryStatusFilter(e.target.value as any)}
+                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-xs sm:text-sm bg-white"
+              >
+                <option value="all">{language === 'ar' ? 'كافة حالات التوفر' : 'All Availability'}</option>
+                <option value="in_stock">{language === 'ar' ? 'متوفر بالمخزون فقط' : 'In Stock Only'}</option>
+                <option value="low_stock">{language === 'ar' ? 'مخزون حرج / وشك النفاد' : 'Low Stock Only'}</option>
+                <option value="expired">{language === 'ar' ? 'أدوية منتهية الصلاحية' : 'Expired Only'}</option>
+                <option value="prescription">{language === 'ar' ? 'أدوية بوصفة طبية فقط' : 'Rx Required Only'}</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Medicines Grid */}
+          {filteredMedicines.length === 0 ? (
+            <div className="py-16 text-center text-slate-400">
+              <Pill size={48} className="mx-auto mb-3 opacity-30" />
+              <h3 className="font-bold text-base text-slate-700">{language === 'ar' ? 'لا توجد أدوية مطابقة لمعايير البحث' : 'No medicines matched your query'}</h3>
+              <p className="text-xs text-slate-500 mt-1">{language === 'ar' ? 'جرب البحث بالمادة الفعالة أو تخفيف شروط الفلترة' : 'Try searching by active ingredient or resetting filters'}</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {filteredMedicines.map((m) => {
+                const expired = isMedicineExpired(m.expiryDate);
+                const expiringSoon = isMedicineExpiringSoon(m.expiryDate);
+                const lowStock = m.quantity <= (m.minStockAlert || 5) && !expired;
+
+                return (
+                  <div
+                    key={m.id}
+                    className={`p-5 rounded-2xl border transition-all flex flex-col justify-between ${
+                      expired 
+                        ? 'border-red-300 bg-red-50/40' 
+                        : lowStock 
+                        ? 'border-amber-200 bg-amber-50/20' 
+                        : 'border-slate-200 hover:border-slate-300 bg-slate-50/40'
+                    }`}
+                  >
+                    <div>
+                      {/* Top Badges */}
+                      <div className="flex items-center justify-between gap-1 mb-2">
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-teal-100 text-teal-800">
+                          {m.dosageForm}
+                        </span>
+
+                        <div className="flex items-center gap-1">
+                          {m.requiresPrescription && (
+                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-red-100 text-red-800 flex items-center gap-0.5" title="وصفة طبية إلزامية">
+                              <BadgeAlert size={11} />
+                              <span>Rx</span>
+                            </span>
+                          )}
+
+                          {expired ? (
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-red-600 text-white">
+                              {language === 'ar' ? 'منتهي الصلاحية' : 'Expired'}
+                            </span>
+                          ) : expiringSoon ? (
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-500 text-white">
+                              {language === 'ar' ? 'قريب الانتهاء' : 'Expiring Soon'}
+                            </span>
+                          ) : m.quantity <= 0 ? (
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-200 text-slate-600">
+                              {language === 'ar' ? 'نفد المخزون' : 'Out of Stock'}
+                            </span>
+                          ) : (
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800">
+                              {language === 'ar' ? 'متوفر' : 'In Stock'}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Medicine Trade & Scientific Name */}
+                      <h4 className="font-bold text-base text-slate-900 mb-1">{m.name}</h4>
+                      
+                      <div className="text-xs text-[#004d40] font-semibold mb-1.5 flex items-center gap-1">
+                        <span className="text-slate-400">{language === 'ar' ? 'المادة الفعالة:' : 'Generic:'}</span>
+                        <span>{m.activeIngredient}</span>
+                      </div>
+
+                      {m.category && (
+                        <div className="text-[11px] font-semibold text-sky-800 bg-sky-50 px-2 py-0.5 rounded-md inline-block mb-2">
+                          {m.category}
+                        </div>
+                      )}
+
+                      {m.description && (
+                        <p className="text-[11px] text-slate-600 mb-2 line-clamp-2">{m.description}</p>
+                      )}
+
+                      <div className="text-xs text-slate-500 space-y-1 mb-3">
+                        <div className="flex justify-between">
+                          <span>{language === 'ar' ? 'العيار والعبوة:' : 'Strength / Pack:'}</span>
+                          <span className="font-mono text-slate-700">{m.strength} ({m.packageSize})</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>{language === 'ar' ? 'الشركة المصنعة:' : 'Manufacturer:'}</span>
+                          <span className="text-slate-700">{m.manufacturer || m.brand}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>{language === 'ar' ? 'تاريخ الصلاحية:' : 'Expiry Date:'}</span>
+                          <span className={`font-mono font-bold ${expired ? 'text-red-700' : expiringSoon ? 'text-amber-700' : 'text-slate-700'}`}>
+                            {m.expiryDate}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>{language === 'ar' ? 'الرصيد المتبقي:' : 'Stock Count:'}</span>
+                          <span className={`font-mono font-bold ${lowStock ? 'text-amber-700' : 'text-slate-900'}`}>
+                            {m.quantity} {language === 'ar' ? 'عبوة' : 'units'}
+                          </span>
+                        </div>
+                        {m.benefits && (
+                          <div className="pt-1.5 border-t border-slate-100 text-[11px] text-teal-800 line-clamp-2">
+                            <span className="font-bold text-teal-900">{language === 'ar' ? 'الفائدة:' : 'Benefits:'}</span> {m.benefits}
+                          </div>
+                        )}
+
+                        {m.sideEffects && (
+                          <div className="text-[11px] text-rose-700 line-clamp-2">
+                            <span className="font-bold text-rose-800">{language === 'ar' ? 'الأضرار/المحاذير:' : 'Side Effects:'}</span> {m.sideEffects}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Price Bar */}
+                      <div className="text-sm font-black text-[#00796b] font-mono pb-2 mb-2 border-b border-slate-200/80">
+                        {m.price.toLocaleString()} {language === 'ar' ? 'دينار عراقي' : 'IQD'}
+                      </div>
+                    </div>
+
+                    {/* Actions */}
+                    <div className="pt-2 flex items-center justify-between">
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => handleAdjustStock(m.id, m.quantity, -1)}
+                          disabled={m.quantity <= 0}
+                          className="w-7 h-7 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold flex items-center justify-center disabled:opacity-40 cursor-pointer"
+                          title="صرف عبوة (-1)"
+                        >
+                          -
+                        </button>
+                        <span className="w-8 text-center font-mono font-bold text-xs">{m.quantity}</span>
+                        <button
+                          onClick={() => handleAdjustStock(m.id, m.quantity, 1)}
+                          className="w-7 h-7 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold flex items-center justify-center cursor-pointer"
+                          title="إضافة عبوة (+1)"
+                        >
+                          +
+                        </button>
+                      </div>
+
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => handleEditClick(m)}
+                          className="p-1.5 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-slate-200 transition-colors"
+                          title="تعديل بيانات الدواء"
+                        >
+                          <Edit3 size={15} />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteMedicine(m.id)}
+                          className="p-1.5 rounded-lg text-red-500 hover:text-red-700 hover:bg-red-50 transition-colors"
+                          title="حذف من الصيدلية"
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* TAB 3: INVENTORY MANAGEMENT & EXPIRY TRACKER */}
+      {activeTab === 'inventory' && (
+        <div className="bg-white rounded-3xl p-6 sm:p-8 border border-slate-200 shadow-sm space-y-6">
+          <div className="pb-4 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <h2 className="text-xl font-bold text-slate-900">
+                {language === 'ar' ? 'مراقبة المخزون، تواريخ الصلاحية وحالات النفاد' : 'Inventory Stock & Expiry Control'}
+              </h2>
+              <p className="text-xs text-slate-500 mt-1">
+                {language === 'ar'
+                  ? 'رصد دوري للتواريخ الحرجة، عزل الأدوية المنتهية الصلاحية ومنع عرضها، وإعادة تزويد الأرصدة الناقصة.'
+                  : 'Track critical expiration windows, quarantine expired lots, and audit stock thresholds.'}
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="px-3 py-1 rounded-xl bg-red-100 text-red-800 text-xs font-bold font-mono">
+                {expiredCount} {language === 'ar' ? 'منتهي' : 'Expired'}
+              </span>
+              <span className="px-3 py-1 rounded-xl bg-amber-100 text-amber-800 text-xs font-bold font-mono">
+                {lowStockCount} {language === 'ar' ? 'مخزون حرج' : 'Low Stock'}
+              </span>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
+                  <th className="p-3">{language === 'ar' ? 'اسم الدواء التجاري' : 'Brand Name'}</th>
+                  <th className="p-3">{language === 'ar' ? 'المادة الفعالة' : 'Active Ingredient'}</th>
+                  <th className="p-3">{language === 'ar' ? 'الشكل والعيار' : 'Form & Strength'}</th>
+                  <th className="p-3">{language === 'ar' ? 'الرصيد الحالي' : 'Stock'}</th>
+                  <th className="p-3">{language === 'ar' ? 'تاريخ الصلاحية' : 'Expiry Date'}</th>
+                  <th className="p-3">{language === 'ar' ? 'حالة الأمان' : 'Safety Status'}</th>
+                  <th className="p-3 text-center">{language === 'ar' ? 'الإجراءات' : 'Actions'}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {medicines.map((m) => {
+                  const expired = isMedicineExpired(m.expiryDate);
+                  const expiringSoon = isMedicineExpiringSoon(m.expiryDate);
+                  const lowStock = m.quantity <= (m.minStockAlert || 5) && !expired;
+
+                  return (
+                    <tr key={m.id} className="border-b border-slate-100 hover:bg-slate-50/50">
+                      <td className="p-3 font-bold text-slate-900">{m.name}</td>
+                      <td className="p-3 text-slate-600 font-mono">{m.activeIngredient}</td>
+                      <td className="p-3 text-slate-600">{m.dosageForm} ({m.strength})</td>
+                      <td className="p-3 font-mono font-bold">
+                        <span className={lowStock ? 'text-amber-600' : 'text-slate-900'}>{m.quantity}</span>
+                      </td>
+                      <td className="p-3 font-mono">
+                        <span className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                          expired ? 'bg-red-100 text-red-800' : expiringSoon ? 'bg-amber-100 text-amber-800' : 'text-slate-700'
+                        }`}>
+                          {m.expiryDate}
+                        </span>
+                      </td>
+                      <td className="p-3">
+                        {expired ? (
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-red-600 text-white">
+                            {language === 'ar' ? 'محجوب / تالف' : 'Quarantined'}
+                          </span>
+                        ) : lowStock ? (
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500 text-white">
+                            {language === 'ar' ? 'طلب توريد' : 'Reorder'}
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                            {language === 'ar' ? 'آمن ومتاح' : 'Optimal'}
+                          </span>
+                        )}
+                      </td>
+                      <td className="p-3 text-center">
+                        <button
+                          onClick={() => handleEditClick(m)}
+                          className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs"
+                        >
+                          {language === 'ar' ? 'تعديل' : 'Edit'}
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 4: ORDERS & PRESCRIPTIONS MANAGEMENT */}
+      {activeTab === 'orders' && (
+        <div className="bg-white rounded-3xl p-6 sm:p-8 border border-slate-200 shadow-sm space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">
+            <div>
+              <h2 className="text-xl font-bold text-slate-900">
+                {language === 'ar' ? 'إدارة وتجهيز طلبات الأدوية والوصفات' : 'Medicine Orders & Prescriptions'}
+              </h2>
+              <p className="text-xs text-slate-500 mt-1">
+                {language === 'ar'
+                  ? 'متابعة طلبات استلام الدواء من الصيدلية أو التوصيل للمنازل، وتدقيق الوصفات الطبية المرفقة.'
+                  : 'Process in-pharmacy pickups, home deliveries, and verify medical prescriptions.'}
+              </p>
+            </div>
+
+            <button
+              onClick={() => setShowNewOrderModal(true)}
+              className="px-4 py-2.5 rounded-xl bg-[#00796b] hover:bg-teal-800 text-white font-bold text-xs flex items-center gap-2 cursor-pointer shadow-xs"
+            >
+              <Plus size={16} />
+              <span>{language === 'ar' ? 'تسجيل طلب صيدلي' : 'New Order'}</span>
+            </button>
+          </div>
+
+          {/* Filter Pills */}
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            {[
+              { id: 'all', labelAr: 'الكل', labelEn: 'All' },
+              { id: 'pending', labelAr: 'قيد الانتظار', labelEn: 'Pending' },
+              { id: 'accepted', labelAr: 'مقبولة', labelEn: 'Accepted' },
+              { id: 'preparing', labelAr: 'قيد التجهيز', labelEn: 'Preparing' },
+              { id: 'ready_for_pickup', labelAr: 'جاهزة للاستلام', labelEn: 'Ready' },
+              { id: 'out_for_delivery', labelAr: 'خرجت للتوصيل', labelEn: 'In Delivery' },
+              { id: 'completed', labelAr: 'مكتملة ومستلمة', labelEn: 'Completed' },
+              { id: 'cancelled', labelAr: 'ملغاة', labelEn: 'Cancelled' },
+            ].map((f) => (
+              <button
+                key={f.id}
+                onClick={() => setOrderFilter(f.id as any)}
+                className={`px-3 py-1.5 rounded-lg font-bold transition-all cursor-pointer ${
+                  orderFilter === f.id
+                    ? 'bg-[#00796b] text-white shadow-xs'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                {language === 'ar' ? f.labelAr : f.labelEn}
+              </button>
+            ))}
+          </div>
+
+          {/* Orders List */}
+          {filteredOrders.length === 0 ? (
+            <div className="py-16 text-center text-slate-400">
+              <ShoppingBag size={48} className="mx-auto mb-3 opacity-30" />
+              <h3 className="font-bold text-base text-slate-700">{language === 'ar' ? 'لا توجد طلبات في هذا الفلتر' : 'No orders in this view'}</h3>
+              <p className="text-xs text-slate-500 mt-1">{language === 'ar' ? 'اختر فلتر آخر أو قم بتسجيل طلب جديد' : 'Try another filter or intake an order'}</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {filteredOrders.map((o) => (
+                <div
+                  key={o.id}
+                  className="p-5 rounded-2xl border border-slate-200 bg-white hover:border-slate-300 transition-all flex flex-col md:flex-row md:items-center justify-between gap-4"
+                >
+                  <div className="flex items-start gap-3.5">
+                    <div className="w-12 h-12 rounded-xl bg-teal-100 text-[#00796b] flex items-center justify-center font-bold text-xs shrink-0">
+                      <Pill size={22} />
+                    </div>
+
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h4 className="font-bold text-base text-slate-900">{o.patientName}</h4>
+                        {o.orderType === 'delivery' ? (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-800 flex items-center gap-1">
+                            <Truck size={11} />
+                            <span>{language === 'ar' ? 'توصيل منزلي' : 'Delivery'}</span>
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700">
+                            {language === 'ar' ? 'استلام من الصيدلية' : 'Pickup'}
+                          </span>
+                        )}
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                          o.status === 'completed'
+                            ? 'bg-emerald-100 text-emerald-800'
+                            : o.status === 'pending'
+                            ? 'bg-amber-100 text-amber-800'
+                            : o.status === 'cancelled'
+                            ? 'bg-red-100 text-red-800'
+                            : 'bg-blue-100 text-blue-800'
+                        }`}>
+                          {o.status === 'pending' && (language === 'ar' ? 'قيد الانتظار' : 'Pending')}
+                          {o.status === 'accepted' && (language === 'ar' ? 'مقبول' : 'Accepted')}
+                          {o.status === 'preparing' && (language === 'ar' ? 'قيد التجهيز' : 'Preparing')}
+                          {o.status === 'ready_for_pickup' && (language === 'ar' ? 'جاهز للاستلام' : 'Ready for Pickup')}
+                          {o.status === 'out_for_delivery' && (language === 'ar' ? 'خرج للتوصيل' : 'Out for Delivery')}
+                          {o.status === 'completed' && (language === 'ar' ? 'مكتمل ومستلم' : 'Completed')}
+                          {o.status === 'cancelled' && (language === 'ar' ? 'ملغي' : 'Cancelled')}
+                        </span>
+                      </div>
+
+                      {/* Items details */}
+                      <div className="text-xs text-slate-600 mt-1.5 space-y-0.5">
+                        {o.items.map((it, idx) => (
+                          <div key={idx} className="flex items-center gap-2">
+                            <span className="font-bold text-slate-800">{it.name} ({it.strength})</span>
+                            <span className="text-slate-400">×</span>
+                            <span className="font-mono">{it.quantity}</span>
+                            <span className="text-slate-400">·</span>
+                            <span className="font-mono text-teal-800">{it.totalPrice.toLocaleString()} د.ع</span>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="text-xs text-slate-500 mt-1 flex flex-wrap items-center gap-3">
+                        <span className="font-mono">{o.patientPhone}</span>
+                        <span>·</span>
+                        <span className="font-mono">{o.createdAt.split('T')[0]}</span>
+                        <span>·</span>
+                        <span className="font-bold font-mono text-slate-900">
+                          {language === 'ar' ? 'الإجمالي:' : 'Total:'} {o.totalAmount.toLocaleString()} د.ع
+                        </span>
+                      </div>
+
+                      {o.deliveryAddress && (
+                        <div className="mt-1 text-xs text-blue-800 bg-blue-50/70 p-2 rounded-lg flex items-center gap-1.5">
+                          <MapPin size={13} />
+                          <span><strong>{language === 'ar' ? 'عنوان التوصيل:' : 'Delivery Address:'}</strong> {o.deliveryAddress}</span>
+                        </div>
+                      )}
+
+                      {o.cancellationReason && (
+                        <div className="mt-2 text-xs text-red-800 bg-red-50 p-2 rounded-lg">
+                          <strong>{language === 'ar' ? 'سبب الإلغاء:' : 'Cancellation Reason:'}</strong> {o.cancellationReason}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Order Status Action Buttons */}
+                  <div className="flex flex-wrap items-center gap-2 pt-3 md:pt-0 border-t md:border-t-0 border-slate-100">
+                    {o.status === 'pending' && isOperable && (
+                      <>
+                        <button
+                          onClick={() => handleUpdateOrderStatus(o.id, 'accepted', o.patientId)}
+                          className="px-3.5 py-1.5 rounded-xl bg-[#00796b] hover:bg-teal-800 text-white font-bold text-xs flex items-center gap-1.5"
+                        >
+                          <Check size={14} />
+                          <span>{language === 'ar' ? 'قبول الطلب' : 'Accept'}</span>
+                        </button>
+                        <button
+                          onClick={() => setCancellingOrder(o)}
+                          className="px-3 py-1.5 rounded-xl bg-red-50 text-red-700 hover:bg-red-100 font-bold text-xs"
+                        >
+                          {language === 'ar' ? 'اعتذار' : 'Reject'}
+                        </button>
+                      </>
+                    )}
+
+                    {o.status === 'accepted' && isOperable && (
+                      <button
+                        onClick={() => handleUpdateOrderStatus(o.id, 'preparing', o.patientId)}
+                        className="px-3.5 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs flex items-center gap-1"
+                      >
+                        <Package size={14} />
+                        <span>{language === 'ar' ? 'بدء التجهيز' : 'Start Prep'}</span>
+                      </button>
+                    )}
+
+                    {o.status === 'preparing' && isOperable && (
+                      <button
+                        onClick={() => handleUpdateOrderStatus(o.id, o.orderType === 'delivery' ? 'out_for_delivery' : 'ready_for_pickup', o.patientId)}
+                        className="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs flex items-center gap-1"
+                      >
+                        <CheckCircle2 size={14} />
+                        <span>{o.orderType === 'delivery' ? (language === 'ar' ? 'خرج للتوصيل' : 'Dispatch Delivery') : (language === 'ar' ? 'جاهز للاستلام' : 'Ready for Pickup')}</span>
+                      </button>
+                    )}
+
+                    {(o.status === 'ready_for_pickup' || o.status === 'out_for_delivery') && isOperable && (
+                      <button
+                        onClick={() => handleUpdateOrderStatus(o.id, 'completed', o.patientId)}
+                        className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center gap-1"
+                      >
+                        <CheckCircle2 size={14} />
+                        <span>{language === 'ar' ? 'تم التسليم بنجاح' : 'Mark Completed'}</span>
+                      </button>
+                    )}
+
+                    {o.patientPhone && (
+                      <a
+                        href={`https://wa.me/964${o.patientPhone.replace(/^0+/, '')}?text=${encodeURIComponent(
+                          language === 'ar'
+                            ? `تحية طيبة من ${pharmacyProfile?.pharmacyName || 'الصيدلية'}. بخصوص طلب الأدوية رقم (${o.id.slice(-6)}).`
+                            : `Hello from ${pharmacyProfile?.pharmacyName}. Regarding your medicine order #${o.id.slice(-6)}.`
+                        )}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="p-2 rounded-xl bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-colors"
+                        title="مراسلة واتساب"
+                      >
+                        <MessageSquare size={16} />
+                      </a>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* TAB: WHOLESALE B2B PROCUREMENT MARKET */}
+      {activeTab === 'wholesale_b2b' && (
+        <div className="space-y-6">
+          {/* Top B2B Header & Cart Trigger Banner */}
+          <div className="bg-gradient-to-r from-teal-900 to-slate-900 rounded-3xl p-6 sm:p-8 text-white shadow-lg flex flex-col md:flex-row md:items-center justify-between gap-6">
+            <div className="space-y-2">
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-teal-500/20 text-teal-300 border border-teal-400/30 text-xs font-bold">
+                <Building2 size={14} />
+                <span>{language === 'ar' ? 'سوق توريد الأدوية B2B الرسمي للصيدليات' : 'Official B2B Pharmacy Supply Market'}</span>
+              </div>
+              <h2 className="text-2xl font-black">
+                {language === 'ar' ? 'شراء الأدوية والمستلزمات بالجملة من المذاخر' : 'Wholesale Procurement from Drug Warehouses'}
+              </h2>
+              <p className="text-xs sm:text-sm text-teal-200 max-w-2xl leading-relaxed">
+                {language === 'ar'
+                  ? 'طلب مباشر بالكرتون والباكيت من المكاتب العلمية ومستودعات الأدوية المعتمدة في بغداد والمحافظات بأسعار الجملة الرسمية.'
+                  : 'Direct replenishment from licensed scientific bureaus & drug warehouses across Iraq with MOQ & carton pricing.'}
+              </p>
+            </div>
+
+            {/* Cart Button */}
+            <div className="shrink-0 flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setShowB2bCartModal(true)}
+                className="relative px-5 py-3 rounded-2xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-black text-xs sm:text-sm flex items-center gap-2.5 shadow-md transition-all cursor-pointer"
+              >
+                <Package size={18} />
+                <span>{language === 'ar' ? 'سلة طلبيات الجملة' : 'Wholesale Cart'}</span>
+                {b2bCart.length > 0 && (
+                  <span className="w-5 h-5 rounded-full bg-slate-950 text-white text-[11px] font-bold flex items-center justify-center">
+                    {b2bCart.length}
+                  </span>
+                )}
+              </button>
+            </div>
+          </div>
+
+          {/* Smart Medicine Autocomplete for Wholesale */}
+          <div className="bg-white rounded-3xl p-6 sm:p-8 border border-slate-200 shadow-sm space-y-4">
+            <div>
+              <h3 className="font-bold text-base text-slate-900">
+                {language === 'ar' ? 'البحث الذكي في كتالوجات المذاخر المعتمدة' : 'Search Wholesale Drug Catalogs'}
+              </h3>
+              <p className="text-xs text-slate-500 mt-0.5">
+                {language === 'ar'
+                  ? 'اكتب 3 أحرف فأكثر للبحث التلقائي بالاسم التجاري أو المادة الفعالة أو الشركة المصنعة.'
+                  : 'Type 3+ characters to search across verified Iraqi drug warehouses.'}
+              </p>
+            </div>
+
+            <div className="max-w-3xl">
+              <SmartMedicineSearch
+                sourceType="wholesale"
+                placeholder={
+                  language === 'ar'
+                    ? 'ابحث عن أوجمنتين، بنادول، كونكور، نيكسيوم، أنسولين أو غيرها...'
+                    : 'Search Augmentin, Panadol, Concor, Nexium, Ceftriaxone...'
+                }
+                onSelectMedicine={(med) => {
+                  handleAddToB2bCart(med, med.minOrderQuantity || 10);
+                }}
+              />
+            </div>
+          </div>
+
+          {/* Featured Verified Drug Warehouses Strip & Interactive Catalog Browser */}
+          <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <h3 className="font-bold text-base text-slate-900">
+                {language === 'ar' ? 'المذاخر والمكاتب العلمية المعتمدة في الشبكة' : 'Verified Partner Warehouses & Scientific Bureaus'}
+              </h3>
+              <span className="text-xs font-bold text-teal-700">
+                {registeredWholesalers.length} {language === 'ar' ? 'مذخر معتمد' : 'approved warehouses'}
+              </span>
+            </div>
+
+            {registeredWholesalers.length > 0 ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {registeredWholesalers.map((w) => {
+                  const isSelected = selectedWarehouseId === w.id;
+                  return (
+                    <div
+                      key={w.id}
+                      onClick={() => handleSelectWarehouse(w.id)}
+                      className={`p-4 rounded-2xl border transition-all cursor-pointer flex items-start gap-3.5 ${
+                        isSelected
+                          ? 'border-teal-600 bg-teal-50 ring-2 ring-teal-500/20 shadow-sm'
+                          : 'border-teal-200 bg-teal-50/40 hover:border-teal-400'
+                      }`}
+                    >
+                      <div className="w-12 h-12 rounded-xl bg-teal-700 text-white flex items-center justify-center shrink-0 shadow-xs">
+                        <Building2 size={24} />
+                      </div>
+                      <div className="flex-1 min-w-0 text-xs">
+                        <div className="flex items-center justify-between gap-2">
+                          <h4 className="font-bold text-sm text-slate-900">{w.name}</h4>
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-teal-100 text-teal-800">
+                            {language === 'ar' ? 'معتمد رسمياً' : 'Verified'}
+                          </span>
+                        </div>
+                        {w.bio && <p className="text-slate-500 mt-1 line-clamp-2">{w.bio}</p>}
+                        <div className="mt-2 text-slate-600 flex items-center gap-3 flex-wrap">
+                          {w.licenseNumber && (
+                            <span>{language === 'ar' ? 'الترخيص:' : 'License:'} <strong>{w.licenseNumber}</strong></span>
+                          )}
+                          {w.governorate && (
+                            <>
+                              <span>·</span>
+                              <span>{w.governorate}</span>
+                            </>
+                          )}
+                          {hasValidPhoneNumber(w.phone) && (
+                            <>
+                              <span>·</span>
+                              <span dir="ltr">{language === 'ar' ? 'هاتف:' : 'Phone:'} <strong>{w.phone}</strong></span>
+                            </>
+                          )}
+                        </div>
+                        <div className="mt-3 pt-2 border-t border-teal-200/60 flex items-center justify-end">
+                          <span className="text-[11px] font-bold text-teal-800">
+                            {isSelected
+                              ? (language === 'ar' ? '✓ يتم عرض الكتالوج أدناه' : '✓ Viewing Catalog Below')
+                              : (language === 'ar' ? 'تصفح كتالوج المنتجات ←' : 'Browse Products Catalog →')}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="p-6 rounded-2xl border border-dashed border-slate-200 bg-slate-50 text-center text-xs text-slate-500 space-y-1">
+                <Building2 size={28} className="mx-auto text-slate-400 mb-1" />
+                <p className="font-bold text-slate-700">
+                  {language === 'ar' ? 'لا توجد مذاخر أدوية مسجلة في المنصة حالياً' : 'No drug wholesalers registered yet'}
+                </p>
+                <p>
+                  {language === 'ar'
+                    ? 'سيتم عرض المكاتب العلمية ومذاخر الأدوية المعتمدة فور تسجيلها وتفعيل حساباتها رسمياً.'
+                    : 'Accredited wholesalers will appear here once officially registered and approved.'}
+                </p>
+              </div>
+            )}
+
+            {/* Selected Warehouse Real Product Catalog */}
+            {selectedWarehouseId && (
+              <div className="pt-5 mt-4 border-t border-slate-200 space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <h4 className="font-bold text-base text-slate-900">
+                      {language === 'ar'
+                        ? `كتالوج منتجات: ${registeredWholesalers.find((w) => w.id === selectedWarehouseId)?.name || 'المذخر'}`
+                        : `Catalog: ${registeredWholesalers.find((w) => w.id === selectedWarehouseId)?.name || 'Warehouse'}`}
+                    </h4>
+                    <p className="text-xs text-slate-500">
+                      {language === 'ar'
+                        ? 'أسعار الجملة الحقيقية، الكميات المتوفرة بالمستودع، والحد الأدنى للطلب.'
+                        : 'Real wholesale prices, live warehouse stock packs, and minimum order quantity.'}
+                    </p>
+                  </div>
+
+                  <div className="relative sm:w-72">
+                    <Search size={14} className="absolute start-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="text"
+                      value={warehouseCatalogSearch}
+                      onChange={(e) => setWarehouseCatalogSearch(e.target.value)}
+                      placeholder={language === 'ar' ? 'بحث داخل منتجات المذخر...' : 'Filter warehouse catalog...'}
+                      className="w-full ps-8 pe-3 py-2 rounded-xl border border-slate-300 text-xs"
+                    />
+                  </div>
+                </div>
+
+                {loadingWarehouseCatalog ? (
+                  <div className="py-10 text-center text-xs text-slate-500 flex flex-col items-center gap-2">
+                    <RefreshCw size={22} className="animate-spin text-teal-700" />
+                    <span>{language === 'ar' ? 'جارٍ تحميل كتالوج المذخر...' : 'Loading warehouse catalog...'}</span>
+                  </div>
+                ) : warehouseCatalog.length === 0 ? (
+                  <div className="p-6 rounded-2xl bg-slate-50 border border-slate-200 text-center text-xs text-slate-500">
+                    {language === 'ar'
+                      ? 'لم يقم هذا المذخر بإضافة منتجات إلى كتالوجه حتى الآن.'
+                      : 'This warehouse has not added products to its catalog yet.'}
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {warehouseCatalog
+                      .filter((it) => {
+                        const q = warehouseCatalogSearch.trim().toLowerCase();
+                        if (!q) return true;
+                        return (
+                          it.name.toLowerCase().includes(q) ||
+                          (it.nameAr || '').toLowerCase().includes(q) ||
+                          it.activeIngredient.toLowerCase().includes(q) ||
+                          it.category.toLowerCase().includes(q)
+                        );
+                      })
+                      .map((item) => {
+                        const expired = isMedicineExpired(item.expiryDate);
+                        const canOrder = item.isAvailable && item.stockPacks > 0 && !expired;
+                        const minQty = Math.min(item.stockPacks || 1, Math.max(1, item.minOrderQuantity || 1));
+                        const draftQty = Math.min(
+                          Math.max(minQty, warehouseQtyDrafts[item.id] ?? minQty),
+                          Math.max(minQty, item.stockPacks)
+                        );
+
+                        return (
+                          <div
+                            key={item.id}
+                            className={`p-4 rounded-2xl border flex flex-col justify-between gap-3 ${
+                              canOrder ? 'border-slate-200 bg-white' : 'border-slate-200 bg-slate-50 opacity-75'
+                            }`}
+                          >
+                            <div className="space-y-1.5 text-xs">
+                              <div className="flex items-start justify-between gap-2">
+                                <div>
+                                  <div className="font-bold text-sm text-slate-900">{item.name}</div>
+                                  {item.nameAr && <div className="text-xs text-teal-800 font-semibold">{item.nameAr}</div>}
+                                </div>
+                                <span
+                                  className={`px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0 ${
+                                    canOrder ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'
+                                  }`}
+                                >
+                                  {expired
+                                    ? language === 'ar'
+                                      ? 'منتهي'
+                                      : 'Expired'
+                                    : canOrder
+                                    ? language === 'ar'
+                                      ? 'متاح'
+                                      : 'Available'
+                                    : language === 'ar'
+                                    ? 'نفد / غير متاح'
+                                    : 'Unavailable'}
+                                </span>
+                              </div>
+
+                              <div className="text-[11px] text-slate-600">
+                                {item.activeIngredient} · {item.strength} · {item.dosageForm}
+                              </div>
+                              <div className="text-[11px] text-slate-500">{item.category}</div>
+                              {item.notes && <p className="text-[11px] text-slate-500 bg-slate-50 p-2 rounded-lg">{item.notes}</p>}
+
+                              <div className="grid grid-cols-2 gap-2 pt-1 text-[11px]">
+                                <div className="bg-slate-50 p-2 rounded-xl">
+                                  <span className="text-slate-400 block">{language === 'ar' ? 'سعر الجملة:' : 'Wholesale:'}</span>
+                                  <strong className="font-mono text-teal-800">{item.wholesalePriceIqd.toLocaleString()} د.ع</strong>
+                                </div>
+                                <div className="bg-slate-50 p-2 rounded-xl">
+                                  <span className="text-slate-400 block">{language === 'ar' ? 'المخزون المتاح:' : 'Stock:'}</span>
+                                  <strong className="font-mono text-slate-900">{item.stockPacks} {language === 'ar' ? 'باكيت' : 'packs'}</strong>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="pt-2 border-t border-slate-100 flex items-center gap-2">
+                              <input
+                                type="number"
+                                min={minQty}
+                                max={Math.max(minQty, item.stockPacks)}
+                                disabled={!canOrder}
+                                value={draftQty}
+                                onChange={(e) =>
+                                  setWarehouseQtyDrafts((prev) => ({
+                                    ...prev,
+                                    [item.id]: Math.max(minQty, Number(e.target.value) || minQty),
+                                  }))
+                                }
+                                className="w-20 px-2.5 py-1.5 rounded-xl border border-slate-300 text-xs font-mono text-center"
+                              />
+                              <button
+                                type="button"
+                                disabled={!canOrder}
+                                onClick={() => handleAddWholesaleCatalogItemToCart(item, draftQty)}
+                                className="flex-1 px-3 py-2 rounded-xl bg-teal-700 hover:bg-teal-800 disabled:bg-slate-300 text-white font-bold text-xs cursor-pointer transition-colors"
+                              >
+                                {language === 'ar' ? 'أضف لسلة الشراء' : 'Add to Cart'}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Pharmacy's Placed B2B Orders & Shipments Tracker */}
+          <div className="bg-white rounded-3xl p-6 sm:p-8 border border-slate-200 shadow-sm space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div>
+                <h3 className="font-bold text-base text-slate-900">
+                  {language === 'ar' ? 'سجل طلبيات الشحنات المحجوزة لدى المذاخر' : 'Placed Wholesale Orders & Shipments'}
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  {language === 'ar'
+                    ? 'متابعة مراحل التجهيز والتوصيل، واستلام الشحنات لإضافتها إلى المخزون المحلي بضغطة واحدة.'
+                    : 'Track batch fulfillment and easily import delivered orders into local pharmacy stock.'}
+                </p>
+              </div>
+              <span className="text-xs font-bold text-slate-500">
+                {b2bOrders.length} {language === 'ar' ? 'طلبية مسجلة' : 'orders'}
+              </span>
+            </div>
+
+            {b2bOrders.length === 0 ? (
+              <div className="py-12 text-center text-slate-400">
+                <Truck size={40} className="mx-auto mb-2 opacity-30" />
+                <h4 className="font-bold text-sm text-slate-700">
+                  {language === 'ar' ? 'لم تقم الصيدلية بطلب شحنات جملة حتى الآن' : 'No wholesale orders placed yet'}
+                </h4>
+                <p className="text-xs text-slate-500 mt-1">
+                  {language === 'ar'
+                    ? 'اختر مذخراً معتمداً أعلاه أو استخدم محرك البحث لإضافة الأدوية إلى سلة الجملة'
+                    : 'Select an approved warehouse above or use search to add medications to your wholesale cart'}
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {b2bOrders.map((ord) => (
+                  <div
+                    key={ord.id}
+                    className="p-5 rounded-2xl border border-slate-200 hover:border-teal-300 hover:shadow-xs transition-all flex flex-col md:flex-row md:items-center justify-between gap-4"
+                  >
+                    <div>
+                      <div className="flex items-center gap-2.5 flex-wrap">
+                        <span className="font-bold text-base text-slate-900">{ord.wholesalerName}</span>
+                        <span className="font-mono text-xs text-slate-400">#{ord.invoiceNumber || ord.id.slice(-6)}</span>
+                        <span className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full ${
+                          ord.status === 'delivered'
+                            ? 'bg-emerald-100 text-emerald-800'
+                            : ord.status === 'dispatched'
+                            ? 'bg-blue-100 text-blue-800'
+                            : ord.status === 'preparing'
+                            ? 'bg-purple-100 text-purple-800'
+                            : ord.status === 'approved'
+                            ? 'bg-teal-100 text-teal-800'
+                            : ord.status === 'rejected'
+                            ? 'bg-rose-100 text-rose-800'
+                            : ord.status === 'cancelled'
+                            ? 'bg-red-100 text-red-800'
+                            : 'bg-amber-100 text-amber-800'
+                        }`}>
+                          {ord.status === 'pending' && (language === 'ar' ? 'قيد مراجعة المذخر' : 'Pending Review')}
+                          {ord.status === 'approved' && (language === 'ar' ? 'تمت موافقة المذخر' : 'Approved')}
+                          {ord.status === 'preparing' && (language === 'ar' ? 'جاري تعبئة الصناديق' : 'Packing')}
+                          {ord.status === 'dispatched' && (language === 'ar' ? 'خرجت مع مندوب التوصيل' : 'In Transit')}
+                          {ord.status === 'delivered' && (language === 'ar' ? 'تم التسليم للصيدلية' : 'Delivered')}
+                          {ord.status === 'rejected' && (language === 'ar' ? 'مرفوضة من المذخر' : 'Rejected')}
+                          {ord.status === 'cancelled' && (language === 'ar' ? 'ملغاة' : 'Cancelled')}
+                        </span>
+                      </div>
+
+                      <div className="text-xs text-slate-500 mt-1 flex items-center gap-3 flex-wrap">
+                        <span>{ord.items.length} {language === 'ar' ? 'أصناف دوائية' : 'items'}</span>
+                        <span>·</span>
+                        <span className="font-mono text-slate-400">{ord.createdAt.split('T')[0]}</span>
+                        {ord.pharmacyNotes && (
+                          <>
+                            <span>·</span>
+                            <span className="text-slate-600 italic">"{ord.pharmacyNotes}"</span>
+                          </>
+                        )}
+                      </div>
+                      {ord.status === 'rejected' && ord.rejectionReason && (
+                        <div className="mt-1.5 text-xs text-rose-800 bg-rose-50 px-2.5 py-1 rounded-lg inline-block">
+                          <strong>{language === 'ar' ? 'سبب الرفض: ' : 'Rejection Reason: '}</strong>
+                          {ord.rejectionReason}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-3 shrink-0 justify-between md:justify-end border-t md:border-t-0 pt-3 md:pt-0">
+                      <div className="text-start md:text-end">
+                        <div className="text-base font-black text-slate-900 font-mono">
+                          {ord.totalAmountIqd.toLocaleString()} <span className="text-xs font-sans font-normal text-slate-500">{language === 'ar' ? 'د.ع' : 'IQD'}</span>
+                        </div>
+                        <span className="text-[11px] text-slate-400">{language === 'ar' ? 'دفع عند الاستلام' : 'Cash on delivery'}</span>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedB2bOrderDetails(ord)}
+                          className="px-3 py-1.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-700 hover:bg-slate-50 cursor-pointer"
+                        >
+                          {language === 'ar' ? 'عرض الفاتورة' : 'View Invoice'}
+                        </button>
+
+                        {/* Import into local inventory action */}
+                        {ord.status === 'delivered' && (
+                          <button
+                            type="button"
+                            onClick={() => handleImportDeliveredOrderToStock(ord)}
+                            className="px-3.5 py-1.5 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
+                          >
+                            <Package size={13} />
+                            <span>{language === 'ar' ? 'استلام وتوريد للمخزون' : 'Import to Stock'}</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: B2B WHOLESALE CART & CHECKOUT */}
+      {showB2bCartModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-white rounded-3xl max-w-xl w-full max-h-[90vh] overflow-y-auto p-6 sm:p-8 border border-slate-200 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div>
+                <h3 className="font-bold text-lg text-slate-900">
+                  {language === 'ar' ? 'سلة طلبيات الجملة للصيدلية' : 'Wholesale Procurement Cart'}
+                </h3>
+                <span className="text-xs text-slate-500">
+                  {b2bCart.length} {language === 'ar' ? 'أصناف محددة للتوريد' : 'items selected'}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowB2bCartModal(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100"
+              >
+                ✕
+              </button>
+            </div>
+
+            {b2bCart.length === 0 ? (
+              <div className="py-8 text-center text-slate-400">
+                <Package size={40} className="mx-auto mb-2 opacity-30" />
+                <p className="text-sm font-bold text-slate-700">{language === 'ar' ? 'السلة فارغة حالياً' : 'Cart is empty'}</p>
+                <p className="text-xs text-slate-500 mt-1">
+                  {language === 'ar' ? 'ابحث عن الأدوية وأضفها إلى السلة لإرسال الطلبية للمذخر' : 'Search and add medications to order'}
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="divide-y divide-slate-100 rounded-2xl border border-slate-200 overflow-hidden">
+                  {b2bCart.map((it, idx) => (
+                    <div key={idx} className="p-3.5 flex items-center justify-between gap-3 text-xs">
+                      <div>
+                        <div className="font-bold text-sm text-slate-900">{it.medicine.name}</div>
+                        <div className="text-[11px] text-slate-500">{it.medicine.strength} · {it.medicine.facilityName}</div>
+                        <div className="text-[11px] text-teal-700 font-mono mt-0.5">
+                          {it.unitPrice.toLocaleString()} د.ع / باكيت
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-3">
+                        <div className="flex items-center border border-slate-200 rounded-xl overflow-hidden">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const newQty = Math.max(it.medicine.minOrderQuantity || 1, it.packQuantity - 5);
+                              setB2bCart((prev) =>
+                                prev.map((item, i) => (i === idx ? { ...item, packQuantity: newQty } : item))
+                              );
+                            }}
+                            className="px-2.5 py-1 text-slate-600 hover:bg-slate-100 font-bold"
+                          >
+                            -
+                          </button>
+                          <span className="px-3 py-1 font-mono font-bold text-slate-900">{it.packQuantity}</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setB2bCart((prev) =>
+                                prev.map((item, i) => {
+                                  if (i !== idx) return item;
+                                  const nextQty = item.packQuantity + 5;
+                                  const capped = item.maxStockPacks !== undefined ? Math.min(item.maxStockPacks, nextQty) : nextQty;
+                                  return { ...item, packQuantity: capped };
+                                })
+                              );
+                            }}
+                            className="px-2.5 py-1 text-slate-600 hover:bg-slate-100 font-bold"
+                          >
+                            +
+                          </button>
+                        </div>
+
+                        <div className="text-end font-mono font-bold text-slate-900 min-w-[70px]">
+                          {(it.unitPrice * it.packQuantity).toLocaleString()} د.ع
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveFromB2bCart(idx)}
+                          className="p-1 rounded-lg text-slate-400 hover:text-red-600"
+                        >
+                          <X size={15} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    {language === 'ar' ? 'ملاحظات وتوجيهات لمندوب المذخر:' : 'Order Notes for Wholesaler:'}
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={b2bNotes}
+                    onChange={(e) => setB2bNotes(e.target.value)}
+                    placeholder={language === 'ar' ? 'وقت الاستلام المفضل، طلب فاتورة رسمية، إلخ...' : 'Delivery time, invoices...'}
+                    className="w-full p-2.5 rounded-xl border border-slate-300 text-xs"
+                  />
+                </div>
+
+                <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 flex items-center justify-between font-bold text-sm">
+                  <span>{language === 'ar' ? 'المجموع الإجمالي للطلبية:' : 'Total Amount:'}</span>
+                  <span className="text-teal-800 text-base font-mono">
+                    {b2bCart.reduce((sum, it) => sum + it.unitPrice * it.packQuantity, 0).toLocaleString()} د.ع
+                  </span>
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowB2bCartModal(false)}
+                    className="px-4 py-2 rounded-xl bg-slate-100 text-slate-600 font-bold text-xs"
+                  >
+                    {language === 'ar' ? 'متابعة التسوق' : 'Continue Shopping'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={b2bSubmitting}
+                    onClick={handleSubmitB2bOrder}
+                    className="px-6 py-2 rounded-xl bg-teal-700 hover:bg-teal-800 text-white font-bold text-xs flex items-center gap-2 cursor-pointer shadow-md"
+                  >
+                    {b2bSubmitting ? <RefreshCw size={14} className="animate-spin" /> : <Check size={14} />}
+                    <span>{language === 'ar' ? 'تأكيد وإرسال الطلبية للمذخر' : 'Submit Wholesale Order'}</span>
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: B2B ORDER DETAILS */}
+      {selectedB2bOrderDetails && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-white rounded-3xl max-w-lg w-full max-h-[90vh] overflow-y-auto p-6 sm:p-8 border border-slate-200 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div>
+                <h3 className="font-bold text-base text-slate-900">
+                  {language === 'ar' ? 'تفاصيل طلبية الجملة' : 'Wholesale Order Invoice'}
+                </h3>
+                <span className="text-xs font-mono text-slate-400">
+                  {selectedB2bOrderDetails.invoiceNumber || selectedB2bOrderDetails.id}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedB2bOrderDetails(null)}
+                className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 flex justify-between items-center">
+                <div>
+                  <span className="text-slate-400 block">{language === 'ar' ? 'المذخر المورد:' : 'Supplying Warehouse:'}</span>
+                  <strong className="text-slate-900">{selectedB2bOrderDetails.wholesalerName}</strong>
+                </div>
+                <div className="text-end">
+                  <span className="text-slate-400 block">{language === 'ar' ? 'الحالة:' : 'Status:'}</span>
+                  <span className="font-bold text-teal-700">{selectedB2bOrderDetails.status}</span>
+                </div>
+              </div>
+
+              <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden">
+                {selectedB2bOrderDetails.items.map((it, idx) => (
+                  <div key={idx} className="p-2.5 flex justify-between items-center">
+                    <div>
+                      <div className="font-bold text-slate-900">{it.name}</div>
+                      <div className="text-[11px] text-slate-400 font-mono">الكمية: {it.packQuantity} باكيت</div>
+                    </div>
+                    <div className="text-end font-mono font-bold text-slate-900">
+                      {it.totalPriceIqd.toLocaleString()} د.ع
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="pt-2 flex justify-between items-center font-bold text-sm">
+                <span>{language === 'ar' ? 'المجموع الصافي:' : 'Total:'}</span>
+                <span className="font-mono text-teal-800 text-base">{selectedB2bOrderDetails.totalAmountIqd.toLocaleString()} د.ع</span>
+              </div>
+
+              <div className="pt-3 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setSelectedB2bOrderDetails(null)}
+                  className="px-4 py-2 rounded-xl bg-slate-100 text-slate-700 font-bold"
+                >
+                  {language === 'ar' ? 'إغلاق' : 'Close'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 5: PHARMACY PROFILE & SETTINGS */}
+      {activeTab === 'settings' && (
+        <form onSubmit={handleSavePharmacySettings} className="bg-white rounded-3xl p-6 sm:p-8 border border-slate-200 shadow-sm space-y-6">
+          <div className="pb-4 border-b border-slate-100">
+            <h2 className="text-xl font-bold text-slate-900">
+              {language === 'ar' ? 'بيانات الصيدلية، الإشراف المهني وساعات الدوام' : 'Pharmacy Profile, License & Operating Hours'}
+            </h2>
+            <p className="text-xs text-slate-500 mt-1">
+              {language === 'ar'
+                ? 'تحديث تفاصيل المنشأة، أرقام التواصل، اسم الصيدلي المرخص، خفارة الليل، وأجور التوصيل.'
+                : 'Configure facility credentials, licensing, night duty, and delivery options.'}
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs">
+            <div>
+              <label className="block font-bold text-slate-700 mb-1">
+                {language === 'ar' ? 'الاسم الرسمي للصيدلية *' : 'Pharmacy Name *'}
+              </label>
+              <input
+                type="text"
+                required
+                value={editProfileForm.pharmacyName}
+                onChange={(e) => setEditProfileForm({ ...editProfileForm, pharmacyName: e.target.value })}
+                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-[#00796b]"
+              />
+            </div>
+
+            <div>
+              <label className="block font-bold text-slate-700 mb-1">
+                {language === 'ar' ? 'اسم الصيدلي المسؤول / المرخص *' : 'Responsible Pharmacist Name *'}
+              </label>
+              <input
+                type="text"
+                required
+                value={editProfileForm.ownerName}
+                onChange={(e) => setEditProfileForm({ ...editProfileForm, ownerName: e.target.value })}
+                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-[#00796b]"
+              />
+            </div>
+
+            <div>
+              <label className="block font-bold text-slate-700 mb-1">
+                {language === 'ar' ? 'رقم إجازة ممارسة المهنة (نقابة الصيادلة) *' : 'Syndicate License ID *'}
+              </label>
+              <input
+                type="text"
+                required
+                value={editProfileForm.licenseNumber}
+                onChange={(e) => setEditProfileForm({ ...editProfileForm, licenseNumber: e.target.value })}
+                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-[#00796b]"
+              />
+            </div>
+
+            <div>
+              <label className="block font-bold text-slate-700 mb-1">
+                {language === 'ar' ? 'المحافظة *' : 'Governorate *'}
+              </label>
+              <select
+                value={editProfileForm.governorate}
+                onChange={(e) => setEditProfileForm({ ...editProfileForm, governorate: e.target.value })}
+                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm bg-white focus:ring-2 focus:ring-[#00796b]"
+              >
+                {governoratesList.map((gov) => (
+                  <option key={gov} value={gov}>
+                    {gov}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block font-bold text-slate-700 mb-1">
+                {language === 'ar' ? 'رقم الهاتف المباشر *' : 'Phone Number *'}
+              </label>
+              <input
+                type="tel"
+                required
+                value={editProfileForm.phone}
+                onChange={(e) => setEditProfileForm({ ...editProfileForm, phone: e.target.value })}
+                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-[#00796b]"
+              />
+            </div>
+
+            <div>
+              <label className="block font-bold text-slate-700 mb-1">
+                {language === 'ar' ? 'رقم الواتساب لاستقبال الوصفات' : 'WhatsApp Line'}
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="tel"
+                  value={editProfileForm.whatsapp}
+                  onChange={(e) => setEditProfileForm({ ...editProfileForm, whatsapp: e.target.value })}
+                  placeholder="078XXXXXXXX"
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-[#00796b]"
+                />
+                {editProfileForm.whatsapp && (
+                  <a
+                    href={formatWhatsAppUrl(editProfileForm.whatsapp, language === 'ar' ? 'مرحباً، أتواصل معكم عبر منصة MEDORA للاستفسار عن توفر دواء' : 'Hello Pharmacy, inquiry via MEDORA about prescription') || '#'}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-3 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center gap-1 shrink-0 transition-colors shadow-sm"
+                    title={language === 'ar' ? 'اختبار رابط الواتساب' : 'Test WhatsApp'}
+                  >
+                    <MessageSquare size={14} />
+                    <span>{language === 'ar' ? 'مراسلة' : 'Chat'}</span>
+                  </a>
+                )}
+              </div>
+            </div>
+
+            <div className="md:col-span-2">
+              <label className="block font-bold text-slate-700 mb-1">
+                {language === 'ar' ? 'عنوان الصيدلية بالتفصيل *' : 'Full Street Address *'}
+              </label>
+              <input
+                type="text"
+                required
+                value={editProfileForm.address}
+                onChange={(e) => setEditProfileForm({ ...editProfileForm, address: e.target.value })}
+                placeholder="بغداد، المنصور، شارع 14 رمضان"
+                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-[#00796b]"
+              />
+            </div>
+
+            <div>
+              <label className="block font-bold text-slate-700 mb-1">
+                {language === 'ar' ? 'ساعات الدوام اليومية *' : 'Daily Working Hours *'}
+              </label>
+              <input
+                type="text"
+                required
+                value={editProfileForm.workingHours}
+                onChange={(e) => setEditProfileForm({ ...editProfileForm, workingHours: e.target.value })}
+                placeholder="8:00 AM - 12:00 AM"
+                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-[#00796b]"
+              />
+            </div>
+
+            <div>
+              <label className="block font-bold text-slate-700 mb-1">
+                {language === 'ar' ? 'شعار الصيدلية (Logo)' : 'Pharmacy Logo'}
+              </label>
+              <div className="flex items-center gap-3">
+                {editProfileForm.logoUrl ? (
+                  <img
+                    src={editProfileForm.logoUrl}
+                    alt="Logo Preview"
+                    className="w-12 h-12 rounded-xl object-cover border border-slate-200 shrink-0"
+                  />
+                ) : (
+                  <div className="w-12 h-12 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-400 shrink-0">
+                    <Building2 size={20} />
+                  </div>
+                )}
+                <div className="flex-1 space-y-1.5">
+                  <label className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-teal-50 hover:bg-teal-100 text-teal-800 text-xs font-bold border border-teal-200 cursor-pointer transition-colors">
+                    <Upload size={14} />
+                    <span>{language === 'ar' ? 'رفع وضغط شعار الصيدلية (PNG/JPG)' : 'Upload & Compress Logo'}</span>
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp"
+                      className="hidden"
+                      onChange={handlePharmacyLogoChange}
+                    />
+                  </label>
+                  <input
+                    type="url"
+                    value={editProfileForm.logoUrl}
+                    onChange={(e) => setEditProfileForm({ ...editProfileForm, logoUrl: e.target.value })}
+                    placeholder="أو أدخل رابط الشعار https://..."
+                    className="w-full px-3 py-1.5 rounded-lg border border-slate-200 text-xs text-slate-600 font-mono focus:ring-1 focus:ring-[#00796b]"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Delivery & Night Duty Options */}
+            <div className="p-4 rounded-2xl bg-teal-50/60 border border-teal-200 md:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <div className="flex items-center gap-2 mb-2">
+                  <input
+                    type="checkbox"
+                    id="delivCheck"
+                    checked={editProfileForm.deliveryAvailable}
+                    onChange={(e) => setEditProfileForm({ ...editProfileForm, deliveryAvailable: e.target.checked })}
+                    className="w-4 h-4 text-teal-600 rounded"
+                  />
+                  <label htmlFor="delivCheck" className="font-bold text-teal-950">
+                    {language === 'ar' ? 'توفير خدمة توصيل الأدوية للمنازل' : 'Home Delivery Service Available'}
+                  </label>
+                </div>
+                {editProfileForm.deliveryAvailable && (
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">
+                      {language === 'ar' ? 'أجور التوصيل المعتمدة (دينار)' : 'Delivery Fee (IQD)'}
+                    </label>
+                    <input
+                      type="number"
+                      step={500}
+                      value={editProfileForm.deliveryFee}
+                      onChange={(e) => setEditProfileForm({ ...editProfileForm, deliveryFee: Number(e.target.value) })}
+                      className="w-full px-3 py-1.5 rounded-xl border border-slate-300 text-sm font-mono"
+                    />
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <div className="flex items-center gap-2 mb-2">
+                  <input
+                    type="checkbox"
+                    id="nightCheck"
+                    checked={editProfileForm.nightDuty}
+                    onChange={(e) => setEditProfileForm({ ...editProfileForm, nightDuty: e.target.checked })}
+                    className="w-4 h-4 text-teal-600 rounded"
+                  />
+                  <label htmlFor="nightCheck" className="font-bold text-teal-950">
+                    {language === 'ar' ? 'صيدلية خافرة (24 ساعة / طوارئ ليلية)' : 'Night Duty / 24-Hour Emergency'}
+                  </label>
+                </div>
+                <p className="text-[11px] text-slate-500 leading-relaxed">
+                  {language === 'ar'
+                    ? 'يتم إبراز الصيدلية في دليل الطوارئ للمرضى للوصول إليها خارج أوقات الدوام الاعتيادية.'
+                    : 'Highlights pharmacy in emergency lists for patients seeking late-night access.'}
+                </p>
+              </div>
+            </div>
+
+            <div className="md:col-span-2">
+              <label className="block font-bold text-slate-700 mb-1">
+                {language === 'ar' ? 'رابط الموقع على خرائط Google' : 'Google Maps Location Link'}
+              </label>
+              <input
+                type="url"
+                value={editProfileForm.mapsUrl}
+                onChange={(e) => setEditProfileForm({ ...editProfileForm, mapsUrl: e.target.value })}
+                placeholder="https://maps.google.com/..."
+                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-[#00796b]"
+              />
+            </div>
+
+            <div className="md:col-span-2">
+              <label className="block font-bold text-slate-700 mb-1">
+                {language === 'ar' ? 'نبذة تعريفية بالصيدلية' : 'Pharmacy Bio & Specializations'}
+              </label>
+              <textarea
+                rows={3}
+                value={editProfileForm.bio}
+                onChange={(e) => setEditProfileForm({ ...editProfileForm, bio: e.target.value })}
+                placeholder={language === 'ar' ? 'صيدلية تخصصية تقدم المشورة الدوائية...' : 'Licensed pharmacy...'}
+                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-[#00796b]"
+              />
+            </div>
+          </div>
+
+          <div className="pt-4 border-t border-slate-100 flex items-center justify-between">
+            <span className="text-xs text-slate-400">
+              {language === 'ar' ? 'الاعتماد النقابي والرقابي موثق في Firestore' : 'Accredited through central governance'}
+            </span>
+            <button
+              type="submit"
+              className="px-6 py-2.5 rounded-xl bg-[#00796b] hover:bg-teal-800 text-white font-bold text-xs sm:text-sm flex items-center gap-2 cursor-pointer shadow-md"
+            >
+              <Save size={16} />
+              <span>{language === 'ar' ? 'حفظ بيانات الصيدلية' : 'Save Profile'}</span>
+            </button>
+          </div>
+        </form>
+      )}
+
+      {/* TAB: ELECTRONIC PRESCRIPTIONS DISPENSING */}
+      {activeTab === 'prescriptions' && (
+        <div className="space-y-6">
+          {/* Header & Lookup Bar */}
+          <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2 mb-1">
+                  <Pill className="text-[#00796b]" size={22} />
+                  <h3 className="font-bold text-lg text-slate-900">
+                    {language === 'ar' ? 'صرف وتدقيق الوصفات الإلكترونية (e-Prescriptions)' : 'Electronic Prescriptions Dispensing'}
+                  </h3>
+                </div>
+                <p className="text-xs text-slate-500">
+                  {language === 'ar' 
+                    ? 'منظومة الصرف الرقمي المشفر مع المنع الحتمي للصرف المزدوج وتدقيق الحساسية الدوائية والطباعة الموحدة' 
+                    : 'Dispense authenticated digital prescriptions with automatic double-dispense prevention'}
+                </p>
+              </div>
+            </div>
+
+            {/* Instant Prescription Number or Scoped Customer Name/Phone Lookup */}
+            <form onSubmit={handleLookupPrescription} className="pt-3 border-t border-slate-100 flex flex-col sm:flex-row items-center gap-2">
+              <div className="relative flex-1 w-full">
+                <Search size={16} className="absolute start-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  value={rxLookupCode}
+                  onChange={(e) => {
+                    setRxLookupCode(e.target.value);
+                    if (!e.target.value.trim()) setScopedCustomerQuery('');
+                  }}
+                  placeholder={language === 'ar' ? 'أدخل رقم الوصفة (RX-XXXX) أو اسم / هاتف المريض المرتبط بصيدليتك...' : 'Enter Rx number (RX-XXXX) or linked customer name/phone...'}
+                  className="w-full ps-10 pe-4 py-2.5 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-[#00796b]"
+                />
+              </div>
+              <button
+                type="submit"
+                className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-[#00796b] hover:bg-teal-800 text-white font-bold text-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+              >
+                <FileCheck2 size={15} />
+                <span>{language === 'ar' ? 'استعلام برقم الوصفة / العميل' : 'Lookup Rx / Customer'}</span>
+              </button>
+            </form>
+          </div>
+
+          {/* Status Filter Badges */}
+          <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs">
+            {[
+              { id: 'all', labelAr: `كافة الوصفات (${incomingPrescriptions.length})`, labelEn: 'All' },
+              { id: 'pending', labelAr: `بانتظار الصرف (${incomingPrescriptions.filter(p => p.status !== 'dispensed' && p.status !== 'rejected' && p.status !== 'cancelled').length})`, labelEn: 'Pending' },
+              { id: 'dispensed', labelAr: `تم صرفها بنجاح (${incomingPrescriptions.filter(p => p.status === 'dispensed').length})`, labelEn: 'Dispensed' },
+              { id: 'rejected', labelAr: `مرفوضة / معتذر عنها (${incomingPrescriptions.filter(p => p.status === 'rejected').length})`, labelEn: 'Rejected' },
+            ].map(f => (
+              <button
+                key={f.id}
+                onClick={() => setPrescriptionFilter(f.id as any)}
+                className={`px-3.5 py-1.5 rounded-xl font-bold transition-all cursor-pointer whitespace-nowrap ${
+                  prescriptionFilter === f.id
+                    ? 'bg-[#00796b] text-white shadow-xs'
+                    : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                {language === 'ar' ? f.labelAr : f.labelEn}
+              </button>
+            ))}
+          </div>
+
+          {/* Prescriptions Cards */}
+          {incomingPrescriptions.filter(rx => {
+            if (scopedCustomerQuery.trim()) {
+              const matched = searchScopedPatients(
+                [{ patientId: rx.patientId, patientName: rx.patientName, patientPhone: rx.patientPhone }],
+                scopedCustomerQuery
+              );
+              const rxCodeMatch = rx.prescriptionNumber.toLowerCase().includes(scopedCustomerQuery.trim().toLowerCase());
+              if (matched.length === 0 && !rxCodeMatch) return false;
+            }
+            if (prescriptionFilter === 'all') return true;
+            if (prescriptionFilter === 'pending') return rx.status === 'sent' || rx.status === 'received' || rx.status === 'accepted' || rx.status === 'dispensing';
+            if (prescriptionFilter === 'dispensed') return rx.status === 'dispensed';
+            if (prescriptionFilter === 'rejected') return rx.status === 'rejected';
+            return true;
+          }).length === 0 ? (
+            <div className="bg-white rounded-3xl p-12 text-center border border-slate-200">
+              <Pill size={40} className="mx-auto text-slate-300 mb-3" />
+              <h4 className="font-bold text-slate-700 mb-1">{language === 'ar' ? 'لا توجد وصفات إلكترونية مطابقة لهذا التصنيف' : 'No prescriptions in this category'}</h4>
+              <p className="text-xs text-slate-400">{language === 'ar' ? 'يمكنك البحث برقم الوصفة أو باسم وهاتف العميل أعلاه.' : 'Search by Rx number or linked customer name/phone above.'}</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-5">
+              {incomingPrescriptions
+                .filter(rx => {
+                  if (scopedCustomerQuery.trim()) {
+                    const matched = searchScopedPatients(
+                      [{ patientId: rx.patientId, patientName: rx.patientName, patientPhone: rx.patientPhone }],
+                      scopedCustomerQuery
+                    );
+                    const rxCodeMatch = rx.prescriptionNumber.toLowerCase().includes(scopedCustomerQuery.trim().toLowerCase());
+                    if (matched.length === 0 && !rxCodeMatch) return false;
+                  }
+                  if (prescriptionFilter === 'all') return true;
+                  if (prescriptionFilter === 'pending') return rx.status === 'sent' || rx.status === 'received' || rx.status === 'accepted' || rx.status === 'dispensing';
+                  if (prescriptionFilter === 'dispensed') return rx.status === 'dispensed';
+                  if (prescriptionFilter === 'rejected') return rx.status === 'rejected';
+                  return true;
+                })
+                .map((rx) => {
+                  const isDispensed = rx.status === 'dispensed';
+                  const isRejected = rx.status === 'rejected';
+                  const isPending = rx.status === 'sent' || rx.status === 'received' || rx.status === 'accepted' || rx.status === 'dispensing';
+
+                  return (
+                    <div
+                      key={rx.id}
+                      className={`bg-white rounded-3xl p-6 border transition-all ${
+                        isDispensed
+                          ? 'border-emerald-300 bg-emerald-50/15 shadow-xs'
+                          : isRejected
+                          ? 'border-red-200 bg-red-50/20 opacity-80'
+                          : 'border-slate-200 shadow-sm hover:shadow-md'
+                      }`}
+                    >
+                      {/* Top Bar: Rx Number, Badges, Doctor Details */}
+                      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-slate-100">
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2 mb-2">
+                            <span className="font-mono text-xs font-black bg-[#004d40] text-white px-3 py-1 rounded-lg">
+                              {rx.prescriptionNumber}
+                            </span>
+                            <span className={`px-2.5 py-1 rounded-lg text-xs font-bold flex items-center gap-1.5 ${
+                              isDispensed
+                                ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                                : rx.status === 'accepted' || rx.status === 'dispensing'
+                                ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                                : isRejected
+                                ? 'bg-red-100 text-red-800 border border-red-300'
+                                : 'bg-blue-100 text-blue-800 border border-blue-300'
+                            }`}>
+                              {isDispensed && <CheckCircle2 size={13} />}
+                              {rx.status === 'sent' && <Send size={13} />}
+                              {isRejected && <XCircle size={13} />}
+                              <span>
+                                {rx.status === 'sent' && (language === 'ar' ? 'مرسلة وجديدة' : 'New / Sent')}
+                                {rx.status === 'received' && (language === 'ar' ? 'تم الاستلام' : 'Received')}
+                                {rx.status === 'accepted' && (language === 'ar' ? 'مقبولة وقيد التحضير' : 'Accepted')}
+                                {rx.status === 'dispensing' && (language === 'ar' ? 'جارٍ صرف الدواء' : 'Dispensing')}
+                                {rx.status === 'dispensed' && (language === 'ar' ? 'تم الصرف والتسليم' : 'Dispensed')}
+                                {rx.status === 'rejected' && (language === 'ar' ? 'مرفوضة من الصيدلية' : 'Rejected')}
+                              </span>
+                            </span>
+
+                            {isDispensed && (
+                              <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-md">
+                                <ShieldCheck size={13} />
+                                <span>{language === 'ar' ? 'مقفل أمنياً ضد الصرف المزدوج' : 'Locked'}</span>
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-3 text-xs text-slate-700">
+                            <span className="font-bold text-slate-900">{language === 'ar' ? 'المريض:' : 'Patient:'} {rx.patientName}</span>
+                            <span className="text-slate-300">·</span>
+                            <span className="font-mono text-slate-500">{rx.patientPhone}</span>
+                            <span className="text-slate-300">·</span>
+                            <span>{language === 'ar' ? 'الطبيب المعالج:' : 'Doctor:'} {rx.doctorName} ({rx.doctorSpecialty})</span>
+                            <span className="text-slate-300">·</span>
+                            <span className="text-slate-500">{rx.clinicName}</span>
+                          </div>
+                        </div>
+
+                        {/* Actions */}
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            onClick={() => setSelectedPrescriptionForPdf(rx)}
+                            className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+                          >
+                            <Printer size={15} />
+                            <span>{language === 'ar' ? 'معاينة / طباعة نقابية' : 'View / Print PDF'}</span>
+                          </button>
+
+                          {/* Dispense Actions */}
+                          {(rx.status === 'sent' || rx.status === 'received') && (
+                            <>
+                              <button
+                                onClick={() => handleAcceptPrescription(rx.id)}
+                                className="px-3.5 py-2 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs flex items-center gap-1 transition-colors cursor-pointer"
+                              >
+                                <Check size={14} />
+                                <span>{language === 'ar' ? 'قبول وتجهيز' : 'Accept'}</span>
+                              </button>
+                              <button
+                                onClick={() => handleOpenRejectModal(rx)}
+                                className="px-3 py-2 rounded-xl bg-red-50 hover:bg-red-100 text-red-700 font-bold text-xs flex items-center gap-1 transition-colors cursor-pointer"
+                              >
+                                <XCircle size={14} />
+                                <span>{language === 'ar' ? 'اعتذار / رفض' : 'Reject'}</span>
+                              </button>
+                            </>
+                          )}
+
+                          {(rx.status === 'accepted' || rx.status === 'dispensing') && (
+                            <button
+                              onClick={() => handleDispensePrescription(rx)}
+                              className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-md transition-all cursor-pointer"
+                            >
+                              <ShieldCheck size={15} />
+                              <span>{language === 'ar' ? 'ختم وصرف الوصفة نهائياً' : 'Certify & Dispense'}</span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Allergies Alert Banner */}
+                      {rx.patientAllergies && rx.patientAllergies.length > 0 && (
+                        <div className="mt-3 p-3 rounded-2xl bg-red-50 border border-red-200 text-red-900 text-xs flex items-center gap-2">
+                          <AlertTriangle size={18} className="text-red-600 shrink-0" />
+                          <div>
+                            <span className="font-bold">{language === 'ar' ? 'تحذير حساسية دوائية مسجلة للمريض:' : 'Patient Drug Allergy Warning:'} </span>
+                            <span className="font-semibold">{rx.patientAllergies.join('، ')}</span>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Rejection Notice */}
+                      {isRejected && rx.rejectionReason && (
+                        <div className="mt-3 p-3 rounded-2xl bg-red-50 border border-red-200 text-red-900 text-xs flex items-center gap-2">
+                          <XCircle size={16} className="text-red-600 shrink-0" />
+                          <div>
+                            <span className="font-bold">{language === 'ar' ? 'سبب الاعتذار عن الصرف:' : 'Rejection Reason:'} </span>
+                            <span>{rx.rejectionReason}</span>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Diagnosis */}
+                      {rx.diagnosis && (
+                        <div className="mt-3 text-xs text-slate-700 bg-slate-50 p-2.5 rounded-xl">
+                          <span className="font-bold text-slate-900">{language === 'ar' ? 'التشخيص الطبي المعالج:' : 'Diagnosis:'} </span>
+                          <span>{rx.diagnosis}</span>
+                        </div>
+                      )}
+
+                      {/* Prescribed Items Table */}
+                      <div className="mt-4 space-y-2">
+                        <span className="text-xs font-bold text-slate-800 block">
+                          {language === 'ar' ? `الأدوية المطلوب صرفها (${rx.items.length}):` : `Prescribed Items (${rx.items.length}):`}
+                        </span>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                          {rx.items.map((item, idx) => (
+                            <div key={idx} className="p-3 rounded-2xl border border-slate-200 bg-slate-50/60 flex items-start gap-2.5">
+                              <div className="w-6 h-6 rounded-lg bg-[#00796b]/15 text-[#00796b] flex items-center justify-center font-bold text-xs shrink-0 mt-0.5">
+                                {idx + 1}
+                              </div>
+                              <div className="text-xs space-y-0.5 min-w-0 flex-1">
+                                <div className="font-bold text-slate-900 truncate">
+                                  {item.name} <span className="text-[#00796b] font-mono">({item.strength})</span>
+                                </div>
+                                <div className="text-[11px] text-slate-500 font-medium">
+                                  {item.dosageForm} · {item.dosage} · {item.frequency}
+                                </div>
+                                <div className="text-[11px] text-slate-600">
+                                  <span className="font-semibold">{language === 'ar' ? 'المدة:' : 'Duration:'}</span> {item.duration}
+                                </div>
+                                {item.instructions && (
+                                  <div className="text-[11px] text-slate-600 italic bg-white p-1 rounded border border-slate-100">
+                                    {item.instructions}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* Automatic Drug-Drug Interaction Safety Verification */}
+                        {rx.items && rx.items.length >= 2 && (
+                          <div className="pt-2">
+                            <DrugInteractionPanel medicines={rx.items} />
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Dispensed Certification Stamp */}
+                      {isDispensed && (
+                        <div className="mt-4 p-3.5 rounded-2xl bg-emerald-100/70 border border-emerald-300 text-emerald-950 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                          <div className="flex items-center gap-2 font-bold">
+                            <ShieldCheck size={18} className="text-emerald-700 shrink-0" />
+                            <span>
+                              {language === 'ar' 
+                                ? `تم الصرف والختم بواسطة: ${rx.dispensedByName || rx.dispensedPharmacyName}` 
+                                : `Dispensed & Certified by: ${rx.dispensedByName || rx.dispensedPharmacyName}`}
+                            </span>
+                          </div>
+                          {rx.dispensedAt && (
+                            <div className="font-mono text-[11px] text-emerald-800">
+                              {new Date(rx.dispensedAt).toLocaleString(language === 'ar' ? 'ar-IQ' : 'en-US')}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* TAB: UNIFIED PRIVATE MESSAGING */}
+      {activeTab === 'messages' && user && (
+        <PrivateMessagingWorkspace
+          currentUserUid={user.uid}
+          currentUserName={pharmacyProfile?.pharmacyName || userProfile?.displayName || 'Pharmacy'}
+          currentUserRole="pharmacy"
+          onClose={() => setActiveTab('dashboard')}
+        />
+      )}
+
+      {/* MODAL: REJECT PRESCRIPTION WITH REASON */}
+      {rejectingRx && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 border border-slate-200 shadow-2xl">
+            <h3 className="font-bold text-base text-slate-900 mb-1">
+              {language === 'ar' ? `الاعتذار عن صرف الوصفة ${rejectingRx.prescriptionNumber}` : `Reject Rx ${rejectingRx.prescriptionNumber}`}
+            </h3>
+            <p className="text-xs text-slate-500 mb-4">
+              {language === 'ar' ? 'يرجى توضيح سبب الرفض ليتم إبلاغ الطبيب والمريض رسمياً.' : 'State the reason to notify physician and patient.'}
+            </p>
+
+            <form onSubmit={handleConfirmReject} className="space-y-4 text-xs">
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">{language === 'ar' ? 'سبب الرفض *' : 'Reason *'}</label>
+                <textarea
+                  rows={3}
+                  required
+                  value={rejectReason}
+                  onChange={(e) => setRejectReason(e.target.value)}
+                  placeholder={language === 'ar' ? 'مثال: نفاد أحد الأصناف الحيوية، تعارض دوائي مرصود، عدم وضوح العيار...' : 'Drug out of stock, dosage discrepancy, etc.'}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-red-400"
+                />
+              </div>
+
+              <div className="pt-2 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setRejectingRx(null)}
+                  className="px-4 py-2 rounded-xl bg-slate-100 text-slate-600 font-bold"
+                >
+                  {language === 'ar' ? 'إلغاء' : 'Cancel'}
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white font-bold"
+                >
+                  {language === 'ar' ? 'تأكيد الرفض والإبلاغ' : 'Confirm Rejection'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: PRESCRIPTION PRINT / PDF */}
+      {selectedPrescriptionForPdf && (
+        <PrescriptionPdfModal
+          prescription={selectedPrescriptionForPdf}
+          onClose={() => setSelectedPrescriptionForPdf(null)}
+        />
+      )}
+
+      {/* MODAL: ADD / EDIT MEDICINE ITEM */}
+      {showNewMedicineModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-white rounded-3xl max-w-xl w-full max-h-[90vh] overflow-y-auto p-6 sm:p-8 border border-slate-200 shadow-2xl">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-100 mb-4">
+              <div>
+                <h3 className="font-bold text-lg text-slate-900">
+                  {editingMedicine 
+                    ? (language === 'ar' ? 'تعديل بيانات الدواء والمخزون' : 'Edit Medicine Details')
+                    : (language === 'ar' ? 'إضافة صنف دوائي جديد للمخزون' : 'Register New Medicine')}
+                </h3>
+                <span className="text-xs text-slate-500">
+                  {language === 'ar' ? 'توثيق المادة الفعالة وتاريخ الصلاحية' : 'Specify generic composition & expiry'}
+                </span>
+              </div>
+              <button
+                onClick={() => {
+                  setShowNewMedicineModal(false);
+                  setEditingMedicine(null);
+                }}
+                className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveMedicine} className="space-y-4 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">{language === 'ar' ? 'اسم الدواء التجاري (Brand Name) *' : 'Commercial Name *'}</label>
+                  <input
+                    type="text"
+                    required
+                    value={medicineForm.name}
+                    onChange={(e) => setMedicineForm({ ...medicineForm, name: e.target.value })}
+                    placeholder="Panadol Extra, Augmentin, etc."
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-[#00796b]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">{language === 'ar' ? 'المادة الفعالة العلمية (Active Ingredient) *' : 'Active Generic Ingredient *'}</label>
+                  <input
+                    type="text"
+                    required
+                    value={medicineForm.activeIngredient}
+                    onChange={(e) => setMedicineForm({ ...medicineForm, activeIngredient: e.target.value })}
+                    placeholder="Paracetamol, Amoxicillin, etc."
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-[#00796b]"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">{language === 'ar' ? 'الشكل الصيدلاني *' : 'Dosage Form *'}</label>
+                  <select
+                    value={medicineForm.dosageForm}
+                    onChange={(e) => setMedicineForm({ ...medicineForm, dosageForm: e.target.value })}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm bg-white"
+                  >
+                    {dosageFormsList.map((f, idx) => (
+                      <option key={idx} value={f}>{f}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">{language === 'ar' ? 'العيار والتركيز *' : 'Strength *'}</label>
+                  <input
+                    type="text"
+                    required
+                    value={medicineForm.strength}
+                    onChange={(e) => setMedicineForm({ ...medicineForm, strength: e.target.value })}
+                    placeholder="500mg, 1g, 10mg/5ml"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">{language === 'ar' ? 'حجم العبوة *' : 'Package Size *'}</label>
+                  <input
+                    type="text"
+                    required
+                    value={medicineForm.packageSize}
+                    onChange={(e) => setMedicineForm({ ...medicineForm, packageSize: e.target.value })}
+                    placeholder="20 Tablets, 100ml"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">{language === 'ar' ? 'الفئة الدوائية (Category) *' : 'Medicine Category *'}</label>
+                  <select
+                    value={medicineForm.category}
+                    onChange={(e) => setMedicineForm({ ...medicineForm, category: e.target.value })}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm bg-white"
+                  >
+                    {medicineCategoriesList.map((cat, idx) => (
+                      <option key={idx} value={cat}>{cat}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">{language === 'ar' ? 'الشركة المصنعة / العلامة' : 'Manufacturer'}</label>
+                  <input
+                    type="text"
+                    value={medicineForm.manufacturer}
+                    onChange={(e) => setMedicineForm({ ...medicineForm, manufacturer: e.target.value })}
+                    placeholder="GSK, SDI, Pfizer, Julphar"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">{language === 'ar' ? 'وصف الدواء والتعريف التجاري (Description)' : 'Medicine Description'}</label>
+                <textarea
+                  rows={2}
+                  value={medicineForm.description}
+                  onChange={(e) => setMedicineForm({ ...medicineForm, description: e.target.value })}
+                  placeholder={language === 'ar' ? 'وصف موجز للاستخدام السريري والمواصفات...' : 'Brief description of medicine and clinical use...'}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-[#00796b]"
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">{language === 'ar' ? 'السعر الرسمي (دينار عراقي) *' : 'Price (IQD) *'}</label>
+                <input
+                  type="number"
+                  required
+                  min={250}
+                  step={250}
+                  value={medicineForm.price}
+                  onChange={(e) => setMedicineForm({ ...medicineForm, price: Number(e.target.value) })}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm font-mono"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">{language === 'ar' ? 'الكمية المتوفرة بالمخزون *' : 'Stock Quantity *'}</label>
+                  <input
+                    type="number"
+                    required
+                    min={0}
+                    value={medicineForm.quantity}
+                    onChange={(e) => setMedicineForm({ ...medicineForm, quantity: Number(e.target.value) })}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">{language === 'ar' ? 'حد التنبيه للنفاد' : 'Min Stock Alert'}</label>
+                  <input
+                    type="number"
+                    min={1}
+                    value={medicineForm.minStockAlert}
+                    onChange={(e) => setMedicineForm({ ...medicineForm, minStockAlert: Number(e.target.value) })}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">{language === 'ar' ? 'تاريخ انتهاء الصلاحية *' : 'Expiry Date *'}</label>
+                  <input
+                    type="date"
+                    required
+                    value={medicineForm.expiryDate}
+                    onChange={(e) => setMedicineForm({ ...medicineForm, expiryDate: e.target.value })}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm font-mono"
+                  />
+                </div>
+              </div>
+
+              {/* Prescription Checkbox */}
+              <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between">
+                <div>
+                  <span className="font-bold text-slate-800 block">{language === 'ar' ? 'يتطلب وصفة طبية إلزامية (Rx Required)' : 'Prescription Required (Rx)'}</span>
+                  <span className="text-[11px] text-slate-500">{language === 'ar' ? 'المضادات الحيوية، أدوية الأمراض المزمنة، والمهدئات' : 'Antibiotics, controlled substances'}</span>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={medicineForm.requiresPrescription}
+                  onChange={(e) => setMedicineForm({ ...medicineForm, requiresPrescription: e.target.checked })}
+                  className="w-5 h-5 text-teal-600 rounded"
+                />
+              </div>
+
+              {/* Benefits & Medical Indications */}
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">
+                  {language === 'ar' ? 'فائدة الدواء ودواعي الاستعمال (Benefits & Uses) *' : 'Benefits & Medical Indications *'}
+                </label>
+                <textarea
+                  rows={2}
+                  required
+                  value={medicineForm.benefits}
+                  onChange={(e) => setMedicineForm({ ...medicineForm, benefits: e.target.value })}
+                  placeholder={language === 'ar' ? 'مثال: خافض للحرارة ومسكن للآلام المعتدلة والصداع، آلام المفاصل...' : 'E.g., Fever reducer, mild pain relief, headache treatment...'}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-[#00796b]"
+                />
+              </div>
+
+              {/* Side Effects & Warnings */}
+              <div>
+                <label className="block font-bold text-red-700 mb-1">
+                  {language === 'ar' ? 'أضرار الدواء والآثار الجانبية وموانع الاستعمال (Risks & Side Effects) *' : 'Side Effects & Precautions *'}
+                </label>
+                <textarea
+                  rows={2}
+                  required
+                  value={medicineForm.sideEffects}
+                  onChange={(e) => setMedicineForm({ ...medicineForm, sideEffects: e.target.value })}
+                  placeholder={language === 'ar' ? 'مثال: قد يسبب غثيان خفيف أو اضطراب معدة. يمنع لمرضى القصور الكبدي الحاد أو الحساسية المفرطة...' : 'E.g., Mild nausea, upset stomach. Contraindicated in severe liver impairment...'}
+                  className="w-full px-3 py-2 rounded-xl border border-red-200 text-sm focus:ring-2 focus:ring-red-400 bg-red-50/20"
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">{language === 'ar' ? 'ملاحظات صيدلانية إضافية' : 'Pharmacist Notes'}</label>
+                <textarea
+                  rows={2}
+                  value={medicineForm.notes}
+                  onChange={(e) => setMedicineForm({ ...medicineForm, notes: e.target.value })}
+                  placeholder={language === 'ar' ? 'يحفظ في درجة حرارة أقل من 25 مئوية، بعيداً عن الضوء...' : 'Store below 25°C...'}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm"
+                />
+              </div>
+
+              <div className="pt-3 border-t border-slate-100 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowNewMedicineModal(false);
+                    setEditingMedicine(null);
+                  }}
+                  className="px-4 py-2 rounded-xl bg-slate-100 text-slate-600 font-bold"
+                >
+                  {language === 'ar' ? 'إلغاء' : 'Cancel'}
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-xl bg-[#00796b] text-white font-bold"
+                >
+                  {editingMedicine 
+                    ? (language === 'ar' ? 'حفظ التعديلات' : 'Update Medicine') 
+                    : (language === 'ar' ? 'إدراج الدواء' : 'Save Medicine')}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: DIRECT PHARMACY ORDER INTAKE */}
+      {showNewOrderModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-8 border border-slate-200 shadow-2xl">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-100 mb-4">
+              <h3 className="font-bold text-lg text-slate-900">
+                {language === 'ar' ? 'تسجيل طلب دواء / صرف وصفة' : 'Intake Medicine Order'}
+              </h3>
+              <button
+                onClick={() => setShowNewOrderModal(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateOrder} className="space-y-4 text-xs">
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">{language === 'ar' ? 'اسم المريض / المراجع *' : 'Patient Name *'}</label>
+                <input
+                  type="text"
+                  required
+                  value={newOrderData.patientName}
+                  onChange={(e) => setNewOrderData({ ...newOrderData, patientName: e.target.value })}
+                  placeholder={language === 'ar' ? 'الاسم الثلاثي' : 'Patient Name'}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-[#00796b]"
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">{language === 'ar' ? 'رقم الهاتف (واتساب) *' : 'Phone Number *'}</label>
+                <input
+                  type="tel"
+                  required
+                  value={newOrderData.patientPhone}
+                  onChange={(e) => setNewOrderData({ ...newOrderData, patientPhone: e.target.value })}
+                  placeholder="07XXXXXXXXX"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-[#00796b]"
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">{language === 'ar' ? 'اختر الدواء من المخزون الصالح *' : 'Select Medicine *'}</label>
+                <select
+                  required
+                  value={newOrderData.medicineId}
+                  onChange={(e) => setNewOrderData({ ...newOrderData, medicineId: e.target.value })}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm bg-white"
+                >
+                  <option value="">{language === 'ar' ? '-- اختر الصنف الدوائي --' : '-- Choose medicine --'}</option>
+                  {medicines.filter(m => !isMedicineExpired(m.expiryDate) && m.quantity > 0).map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name} ({m.strength}) - {m.price.toLocaleString()} د.ع [الرصيد: {m.quantity}]
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">{language === 'ar' ? 'الكمية المطلوبة *' : 'Quantity *'}</label>
+                  <input
+                    type="number"
+                    required
+                    min={1}
+                    value={newOrderData.quantity}
+                    onChange={(e) => setNewOrderData({ ...newOrderData, quantity: Number(e.target.value) })}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">{language === 'ar' ? 'طريقة الاستلام *' : 'Delivery Method *'}</label>
+                  <select
+                    value={newOrderData.orderType}
+                    onChange={(e) => setNewOrderData({ ...newOrderData, orderType: e.target.value as any })}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm bg-white"
+                  >
+                    <option value="pickup">{language === 'ar' ? 'استلام من الصيدلية' : 'In-Pharmacy Pickup'}</option>
+                    <option value="delivery">{language === 'ar' ? 'توصيل منزلي' : 'Home Delivery'}</option>
+                  </select>
+                </div>
+              </div>
+
+              {newOrderData.orderType === 'delivery' && (
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">{language === 'ar' ? 'عنوان التوصيل بالتفصيل *' : 'Delivery Address *'}</label>
+                  <input
+                    type="text"
+                    required
+                    value={newOrderData.deliveryAddress}
+                    onChange={(e) => setNewOrderData({ ...newOrderData, deliveryAddress: e.target.value })}
+                    placeholder={language === 'ar' ? 'المنطقة، أقرب نقطة دالة' : 'Full address'}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-[#00796b]"
+                  />
+                </div>
+              )}
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">{language === 'ar' ? 'تعليمات الصيدلي للمريض' : 'Pharmacist Instructions'}</label>
+                <textarea
+                  rows={2}
+                  value={newOrderData.pharmacistNotes}
+                  onChange={(e) => setNewOrderData({ ...newOrderData, pharmacistNotes: e.target.value })}
+                  placeholder={language === 'ar' ? 'حبة واحدة بعد الطعام مرتين يومياً...' : 'Dosage directions...'}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm"
+                />
+              </div>
+
+              <div className="pt-3 border-t border-slate-100 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowNewOrderModal(false)}
+                  className="px-4 py-2 rounded-xl bg-slate-100 text-slate-600 font-bold"
+                >
+                  {language === 'ar' ? 'إلغاء' : 'Cancel'}
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-xl bg-[#00796b] text-white font-bold"
+                >
+                  {language === 'ar' ? 'تأكيد وصرف الطلب' : 'Confirm Order'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: CANCEL ORDER */}
+      {cancellingOrder && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 border border-slate-200 shadow-2xl">
+            <h3 className="font-bold text-base text-slate-900 mb-2">
+              {language === 'ar' ? `إلغاء طلب المراجع: ${cancellingOrder.patientName}` : `Cancel Order: ${cancellingOrder.patientName}`}
+            </h3>
+            <p className="text-xs text-slate-500 mb-4">
+              {language === 'ar' ? 'سيتم إشعار المراجع واسترجاع كميات الأدوية إلى رصيد المخزون الصيدلاني.' : 'Patient will be alerted and medicine quantities returned to stock.'}
+            </p>
+
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">{language === 'ar' ? 'سبب الإلغاء' : 'Cancellation Reason'}</label>
+                <input
+                  type="text"
+                  placeholder={language === 'ar' ? 'عدم توفر وصفة طبية، اعتذار المراجع...' : 'Prescription missing...'}
+                  value={cancelReason}
+                  onChange={(e) => setCancelReason(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm"
+                />
+              </div>
+
+              <div className="pt-3 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setCancellingOrder(null)}
+                  className="px-4 py-2 rounded-xl bg-slate-100 text-slate-600 font-bold"
+                >
+                  {language === 'ar' ? 'تراجع' : 'Back'}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmCancelOrder}
+                  className="px-5 py-2 rounded-xl bg-red-600 text-white font-bold"
+                >
+                  {language === 'ar' ? 'تأكيد الإلغاء' : 'Confirm Cancel'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: ORDER DETAILS & DISPENSING SLIP (ISOLATED A4 PRINT) */}
+      {selectedOrderDetails && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-in fade-in">
+          <div
+            ref={dispensingSlipPrintRef}
+            dir={isRTL ? 'rtl' : 'ltr'}
+            className="medora-print-sheet bg-white rounded-3xl max-w-lg w-full p-6 sm:p-8 border border-slate-200 shadow-2xl relative print:rounded-none print:border-0 print:shadow-none"
+          >
+            {/* Official A4 Print Letterhead */}
+            <div className="hidden print:flex items-center justify-between pb-4 mb-5 border-b-2 border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <img src="/assets/images/medora-official-logo.png" alt="MEDORA" className="h-9 w-auto object-contain" />
+                <div>
+                  <div className="text-base font-black text-[#003366]">
+                    {pharmacyProfile?.pharmacyName || userProfile?.facilityName || 'MEDORA Pharmacy'}
+                  </div>
+                  <div className="text-[11px] font-bold text-slate-600">
+                    {language === 'ar' ? 'إيصال صرف دواء إلكتروني معتمد' : 'Certified Pharmacy Dispensing Slip'}
+                  </div>
+                </div>
+              </div>
+              <div className="text-end text-[11px] text-slate-600">
+                <div className="font-mono font-bold text-[#003366]">{selectedOrderDetails.id}</div>
+                <div>{new Date().toLocaleDateString(language === 'ar' ? 'ar-IQ' : 'en-US')}</div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between pb-4 border-b border-slate-200 mb-4 print:hidden">
+              <div>
+                <h3 className="font-bold text-base text-slate-900">
+                  {language === 'ar' ? 'بيانات وإيصال صرف الطلب الصيدلاني' : 'Pharmacy Dispensing Slip'}
+                </h3>
+                <span className="text-xs text-slate-400 font-mono">Order ID: {selectedOrderDetails.id}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedOrderDetails(null)}
+                className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-4 text-xs">
+              <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200 flex justify-between items-center medora-print-avoid-break">
+                <div>
+                  <span className="text-slate-400 block">{language === 'ar' ? 'المريض:' : 'Patient:'}</span>
+                  <strong className="text-slate-900 text-sm">{selectedOrderDetails.patientName}</strong>
+                </div>
+                <div className="text-end">
+                  <span className="text-slate-400 block">{language === 'ar' ? 'الحالة:' : 'Status:'}</span>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-100 text-teal-800">
+                    {selectedOrderDetails.status}
+                  </span>
+                </div>
+              </div>
+
+              <div>
+                <span className="font-bold text-slate-700 block mb-2">{language === 'ar' ? 'الأصناف المصروفة:' : 'Dispensed Items:'}</span>
+                <div className="space-y-2">
+                  {selectedOrderDetails.items.map((it, idx) => (
+                    <div key={idx} className="p-2.5 rounded-xl border border-slate-100 bg-white flex justify-between items-center medora-print-avoid-break">
+                      <div>
+                        <div className="font-bold text-slate-900">{it.name}</div>
+                        <div className="text-[11px] text-slate-400 font-mono">{it.activeIngredient} ({it.strength})</div>
+                      </div>
+                      <div className="text-end font-mono">
+                        <div className="font-bold text-slate-900">{it.totalPrice.toLocaleString()} د.ع</div>
+                        <div className="text-[10px] text-slate-400">× {it.quantity}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="pt-2 border-t border-slate-100 flex justify-between items-center font-bold text-sm">
+                <span>{language === 'ar' ? 'المبلغ الإجمالي:' : 'Total Amount:'}</span>
+                <span className="font-mono text-[#00796b] text-base">{selectedOrderDetails.totalAmount.toLocaleString()} د.ع</span>
+              </div>
+
+              {selectedOrderDetails.pharmacistNotes && (
+                <div className="p-3 rounded-xl bg-teal-50 border border-teal-100 text-teal-900 text-xs medora-print-avoid-break">
+                  <strong>{language === 'ar' ? 'إرشادات الاستخدام:' : 'Dosage Instructions:'}</strong>
+                  <p className="mt-0.5">{selectedOrderDetails.pharmacistNotes}</p>
+                </div>
+              )}
+
+              <div className="pt-2 flex justify-end gap-2 print:hidden">
+                {canUserPrintPharmacyOrder(user?.uid, isAdmin, selectedOrderDetails, isDemoMode) && (
+                  <button
+                    type="button"
+                    onClick={() => triggerIsolatedPrint(dispensingSlipPrintRef.current, isRTL ? 'rtl' : 'ltr')}
+                    className="px-4 py-2 rounded-xl bg-slate-900 text-white font-bold text-xs flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Printer size={14} />
+                    <span>{language === 'ar' ? 'طباعة الإيصال' : 'Print Slip'}</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ==================================================== */}
+      {/* MODAL: OFFICIAL ELECTRONIC PRESCRIPTION PDF PREVIEW */}
+      {/* ==================================================== */}
+      {selectedPrescriptionForPdf && (
+        <PrescriptionPdfModal
+          prescription={selectedPrescriptionForPdf}
+          onClose={() => setSelectedPrescriptionForPdf(null)}
+        />
+      )}
+    </div>
+  );
+};
