@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { isVerifiedSuperAdmin } from '../utils/adminSecurity';
+import { isPortalActive, isRoleSuspended } from '../config/portalsConfig';
 import { db, handleFirestoreError, OperationType, sanitizeForFirestore } from '../lib/firebase';
 import { 
   UserProfile, 
@@ -85,6 +86,8 @@ import { notifyUserAccountApprovalStatus } from '../lib/pushEventDispatcher';
 import { SubscriptionPaymentModal } from './SubscriptionPaymentModal';
 import { MedoraPaymentManagement } from './MedoraPaymentManagement';
 import { PrivateMessagingWorkspace } from './PrivateMessagingWorkspace';
+import { SuperAdminSupportTicketsPanel } from './SuperAdminSupportTicketsPanel';
+import { Headphones } from 'lucide-react';
 
 interface SuperAdminPortalWorkspaceProps {
   onBackToHome: () => void;
@@ -103,7 +106,7 @@ export const SuperAdminPortalWorkspace: React.FC<SuperAdminPortalWorkspaceProps>
   } = useAuth();
   const { language, isRTL } = useLanguage();
 
-  const [activeTab, setActiveTab] = useState<'accreditation' | 'analytics' | 'audit_logs' | 'subscriptions' | 'payment_management' | 'id_audit' | 'messages'>('accreditation');
+  const [activeTab, setActiveTab] = useState<'accreditation' | 'analytics' | 'audit_logs' | 'subscriptions' | 'payment_management' | 'id_audit' | 'messages' | 'support_tickets'>('accreditation');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
@@ -1071,6 +1074,18 @@ export const SuperAdminPortalWorkspace: React.FC<SuperAdminPortalWorkspaceProps>
           <MessageSquare size={16} />
           <span>{language === 'ar' ? 'المراسلات الإدارية' : 'Global Messaging'}</span>
         </button>
+
+        <button
+          onClick={() => setActiveTab('support_tickets')}
+          className={`flex-1 min-w-[140px] py-2.5 px-4 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-2 transition-all cursor-pointer ${
+            activeTab === 'support_tickets'
+              ? 'bg-[#003366] text-white shadow-sm'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+          }`}
+        >
+          <Headphones size={16} />
+          <span>{language === 'ar' ? 'تذاكر الدعم الرسمي' : 'Support Tickets'}</span>
+        </button>
       </div>
 
       {/* TAB 1: ACCREDITATION HUB */}
@@ -1148,7 +1163,9 @@ export const SuperAdminPortalWorkspace: React.FC<SuperAdminPortalWorkspaceProps>
               {/* Role filter */}
               <div className="flex flex-wrap items-center gap-1.5 text-xs">
                 <span className="font-bold text-slate-400 me-1">{language === 'ar' ? 'الدور:' : 'Role:'}</span>
-                {(['all', 'doctor', 'radiology_center', 'laboratory', 'pharmacy', 'wholesaler', 'patient', 'secretary'] as const).map((r) => (
+                {(['all', 'doctor', 'radiology_center', 'laboratory', 'pharmacy', 'wholesaler', 'patient', 'secretary'] as const)
+                  .filter((r) => r === 'all' || !isRoleSuspended(r))
+                  .map((r) => (
                   <button
                     key={r}
                     onClick={() => setRoleFilter(r)}
@@ -1370,18 +1387,20 @@ export const SuperAdminPortalWorkspace: React.FC<SuperAdminPortalWorkspaceProps>
                 : 'Real-time telemetry and network distribution from Cloud Firestore (ai-studio-m737medicalplatf-06180e9d-e98a-4a8d-97fc-d8a6644012dc).'}
             </p>
 
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
+            <div className={`grid grid-cols-2 sm:grid-cols-3 ${isPortalActive('radiology') ? 'lg:grid-cols-6' : 'lg:grid-cols-5'} gap-4`}>
               <div className="p-4 rounded-xl bg-blue-50 border border-blue-200 text-center">
                 <Stethoscope size={24} className="text-[#003366] mx-auto mb-2" />
                 <div className="text-xl font-black text-slate-900">{metrics.doctors}</div>
                 <div className="text-xs font-bold text-slate-600 mt-0.5">{language === 'ar' ? 'أطباء معتمدون' : 'Doctors'}</div>
               </div>
 
-              <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-center">
-                <Scan size={24} className="text-amber-800 mx-auto mb-2" />
-                <div className="text-xl font-black text-slate-900">{metrics.radiology}</div>
-                <div className="text-xs font-bold text-slate-600 mt-0.5">{language === 'ar' ? 'مراكز أشعة وسونار' : 'Radiology'}</div>
-              </div>
+              {isPortalActive('radiology') && (
+                <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-center">
+                  <Scan size={24} className="text-amber-800 mx-auto mb-2" />
+                  <div className="text-xl font-black text-slate-900">{metrics.radiology}</div>
+                  <div className="text-xs font-bold text-slate-600 mt-0.5">{language === 'ar' ? 'مراكز أشعة وسونار' : 'Radiology'}</div>
+                </div>
+              )}
 
               <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-center">
                 <FlaskConical size={24} className="text-emerald-800 mx-auto mb-2" />
@@ -1392,7 +1411,11 @@ export const SuperAdminPortalWorkspace: React.FC<SuperAdminPortalWorkspaceProps>
               <div className="p-4 rounded-xl bg-purple-50 border border-purple-200 text-center">
                 <Pill size={24} className="text-purple-800 mx-auto mb-2" />
                 <div className="text-xl font-black text-slate-900">{metrics.pharmacies}</div>
-                <div className="text-xs font-bold text-slate-600 mt-0.5">{language === 'ar' ? 'صيدليات ومذاخر' : 'Pharmacies'}</div>
+                <div className="text-xs font-bold text-slate-600 mt-0.5">
+                  {language === 'ar'
+                    ? (isPortalActive('wholesaler') ? 'صيدليات ومذاخر' : 'صيدليات أهلية')
+                    : 'Pharmacies'}
+                </div>
               </div>
 
               <div className="p-4 rounded-xl bg-cyan-50 border border-cyan-200 text-center">
@@ -1507,12 +1530,14 @@ export const SuperAdminPortalWorkspace: React.FC<SuperAdminPortalWorkspaceProps>
                 { id: 'prescriptions', labelAr: `الوصفات والصرف (${systemAuditLogs.filter(l => l.category === 'prescriptions').length})`, labelEn: 'Rx & Dispensing' },
                 { id: 'diagnostic_orders', labelAr: `طلبات الفحوصات (${systemAuditLogs.filter(l => l.category === 'diagnostic_orders').length})`, labelEn: 'Diagnostic Referrals' },
                 { id: 'lab_diagnostics', labelAr: `المختبر والنتائج (${systemAuditLogs.filter(l => l.category === 'lab_diagnostics').length})`, labelEn: 'Lab Results' },
-                { id: 'radiology', labelAr: `الأشعة والتقارير (${systemAuditLogs.filter(l => l.category === 'radiology').length})`, labelEn: 'Radiology' },
-                { id: 'wholesale_b2b', labelAr: `توريد المذاخر B2B (${systemAuditLogs.filter(l => l.category === 'wholesale_b2b').length})`, labelEn: 'Wholesale B2B' },
+                { id: 'radiology', labelAr: `الأشعة والتقارير (${systemAuditLogs.filter(l => l.category === 'radiology').length})`, labelEn: 'Radiology', hidden: !isPortalActive('radiology') },
+                { id: 'wholesale_b2b', labelAr: `توريد المذاخر B2B (${systemAuditLogs.filter(l => l.category === 'wholesale_b2b').length})`, labelEn: 'Wholesale B2B', hidden: !isPortalActive('wholesaler') },
                 { id: 'messaging_oversight', labelAr: `رقابة الرسائل (${systemAuditLogs.filter(l => l.category === 'messaging_oversight').length})`, labelEn: 'Message Oversight' },
                 { id: 'profiles', labelAr: `الملفات والاعتماد (${systemAuditLogs.filter(l => l.category === 'profiles' || l.category === 'accreditation').length})`, labelEn: 'Profiles' },
                 { id: 'clinic_frontdesk', labelAr: `استقبال العيادات (${auditLogs.length})`, labelEn: 'Front-Desk' },
-              ].map(cat => (
+              ]
+                .filter((cat) => !('hidden' in cat && cat.hidden))
+                .map(cat => (
                 <button
                   key={cat.id}
                   onClick={() => setAuditCategoryFilter(cat.id as any)}
@@ -2167,7 +2192,7 @@ export const SuperAdminPortalWorkspace: React.FC<SuperAdminPortalWorkspaceProps>
           </div>
 
           {/* Quick Metrics by Role Prefix */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
+          <div className={`grid grid-cols-2 sm:grid-cols-3 ${isPortalActive('radiology') && isPortalActive('wholesaler') ? 'lg:grid-cols-7' : 'lg:grid-cols-5'} gap-3`}>
             {[
               { role: 'patient', labelAr: 'المرضى', labelEn: 'Patients', prefix: PORTAL_ID_PREFIXES.patient, color: 'text-sky-700 bg-sky-50 border-sky-200' },
               { role: 'doctor', labelAr: 'الأطباء', labelEn: 'Doctors', prefix: PORTAL_ID_PREFIXES.doctor, color: 'text-blue-700 bg-blue-50 border-blue-200' },
@@ -2176,7 +2201,9 @@ export const SuperAdminPortalWorkspace: React.FC<SuperAdminPortalWorkspaceProps>
               { role: 'radiology_center', labelAr: 'الأشعة', labelEn: 'Radiology', prefix: PORTAL_ID_PREFIXES.radiology_center, color: 'text-cyan-700 bg-cyan-50 border-cyan-200' },
               { role: 'secretary', labelAr: 'السكرتارية', labelEn: 'Secretaries', prefix: PORTAL_ID_PREFIXES.secretary, color: 'text-indigo-700 bg-indigo-50 border-indigo-200' },
               { role: 'wholesaler', labelAr: 'المذاخر', labelEn: 'Wholesalers', prefix: PORTAL_ID_PREFIXES.wholesaler, color: 'text-purple-700 bg-purple-50 border-purple-200' },
-            ].map((item) => {
+            ]
+              .filter((item) => !isRoleSuspended(item.role))
+              .map((item) => {
               const count = usersList.filter(u => u.role === item.role || (item.role === 'radiology_center' && (u.role === 'radiology_center' || (u.role as any) === 'radiology'))).length;
               return (
                 <div key={item.role} className={`p-3.5 rounded-2xl border ${item.color} text-center space-y-1`}>
@@ -2353,6 +2380,11 @@ export const SuperAdminPortalWorkspace: React.FC<SuperAdminPortalWorkspaceProps>
           currentUserRole="super_admin"
           onClose={() => setActiveTab('accreditation')}
         />
+      )}
+
+      {/* TAB 7: OFFICIAL SUPPORT TICKETS (SUPER ADMIN) */}
+      {activeTab === 'support_tickets' && user && (
+        <SuperAdminSupportTicketsPanel adminEmail={user.email || 'bcgmoc@gmail.com'} />
       )}
 
 
@@ -2568,10 +2600,14 @@ export const SuperAdminPortalWorkspace: React.FC<SuperAdminPortalWorkspaceProps>
                   >
                     <option value="all">{language === 'ar' ? 'كافة المنشآت والكوادر' : 'All Roles'}</option>
                     <option value="doctor">{language === 'ar' ? 'أطباء وعيادات' : 'Doctors'}</option>
-                    <option value="radiology_center">{language === 'ar' ? 'مراكز أشعة وسونار' : 'Radiology Centers'}</option>
+                    {isPortalActive('radiology') && (
+                      <option value="radiology_center">{language === 'ar' ? 'مراكز أشعة وسونار' : 'Radiology Centers'}</option>
+                    )}
                     <option value="laboratory">{language === 'ar' ? 'مختبرات سريرية' : 'Laboratories'}</option>
                     <option value="pharmacy">{language === 'ar' ? 'صيدليات' : 'Pharmacies'}</option>
-                    <option value="wholesaler">{language === 'ar' ? 'مذاخر ومكاتب أدوية' : 'Drug Wholesalers'}</option>
+                    {isPortalActive('wholesaler') && (
+                      <option value="wholesaler">{language === 'ar' ? 'مذاخر ومكاتب أدوية' : 'Drug Wholesalers'}</option>
+                    )}
                   </select>
                 </div>
 

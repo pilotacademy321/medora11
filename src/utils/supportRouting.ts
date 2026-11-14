@@ -1,28 +1,30 @@
 import type { UserRole } from '../types';
+import { OFFICIAL_SUPPORT_CONFIG } from '../config/officialSupportConfig';
 
-export const MAIN_SUPPORT_NUMBER = '9647885663748';
-export const MAIN_SUPPORT_DISPLAY = '07885663748';
-export const MAIN_SUPPORT_INTL = '+964 788 566 3748';
-export const MAIN_SUPPORT_URL = 'https://wa.me/9647885663748';
-export const MAIN_SUPPORT_CALL_URL = 'tel:+9647885663748';
+export const MAIN_SUPPORT_NUMBER = OFFICIAL_SUPPORT_CONFIG.generalSupport.whatsappDigits;
+export const MAIN_SUPPORT_DISPLAY = OFFICIAL_SUPPORT_CONFIG.generalSupport.displayPhone;
+export const MAIN_SUPPORT_INTL = OFFICIAL_SUPPORT_CONFIG.generalSupport.intlPhone;
+export const MAIN_SUPPORT_URL = OFFICIAL_SUPPORT_CONFIG.generalSupport.whatsappUrl;
+export const MAIN_SUPPORT_CALL_URL = OFFICIAL_SUPPORT_CONFIG.generalSupport.callUrl;
 
-export const PATIENT_WOMEN_SUPPORT_NUMBER = '9647752564326';
-export const PATIENT_WOMEN_SUPPORT_DISPLAY = '07752564326';
-export const PATIENT_WOMEN_SUPPORT_INTL = '+964 775 256 4326';
-export const PATIENT_WOMEN_SUPPORT_URL = 'https://wa.me/9647752564326';
-export const PATIENT_WOMEN_SUPPORT_CALL_URL = 'tel:+9647752564326';
+export const PATIENT_WOMEN_SUPPORT_NUMBER = OFFICIAL_SUPPORT_CONFIG.womensSupport.whatsappDigits;
+export const PATIENT_WOMEN_SUPPORT_DISPLAY = OFFICIAL_SUPPORT_CONFIG.womensSupport.displayPhone;
+export const PATIENT_WOMEN_SUPPORT_INTL = OFFICIAL_SUPPORT_CONFIG.womensSupport.intlPhone;
+export const PATIENT_WOMEN_SUPPORT_URL = OFFICIAL_SUPPORT_CONFIG.womensSupport.whatsappUrl;
+export const PATIENT_WOMEN_SUPPORT_CALL_URL = OFFICIAL_SUPPORT_CONFIG.womensSupport.callUrl;
 
-export const OFFICIAL_SUPPORT_EMAIL = 'support@medora-iq.com';
-export const OFFICIAL_SUPPORT_EMAIL_HREF = `mailto:${OFFICIAL_SUPPORT_EMAIL}`;
-export const OFFICIAL_INSTAGRAM_URL = 'https://www.instagram.com/medoraq/';
+export const OFFICIAL_SUPPORT_EMAIL = OFFICIAL_SUPPORT_CONFIG.email.address;
+export const OFFICIAL_SUPPORT_EMAIL_HREF = OFFICIAL_SUPPORT_CONFIG.email.mailtoHref;
+export const OFFICIAL_INSTAGRAM_URL = OFFICIAL_SUPPORT_CONFIG.instagram.url;
+export const OFFICIAL_INSTAGRAM_HANDLE = OFFICIAL_SUPPORT_CONFIG.instagram.handle;
 
-export const MAIN_SUPPORT_TITLE_AR = 'الدعم الرئيسي والاشتراكات';
+export const MAIN_SUPPORT_TITLE_AR = OFFICIAL_SUPPORT_CONFIG.generalSupport.titleAr;
 export const MAIN_SUPPORT_BUTTON_AR = 'تواصل مع الدعم الرئيسي';
 
-export const PATIENT_WOMEN_SUPPORT_TITLE_AR = 'دعم المرضى والمساعدة النسائية';
+export const PATIENT_WOMEN_SUPPORT_TITLE_AR = OFFICIAL_SUPPORT_CONFIG.womensSupport.titleAr;
 export const PATIENT_SUPPORT_LABEL_AR = 'دعم المرضى';
 export const PATIENT_SUPPORT_BUTTON_AR = 'تواصل مع دعم المرضى';
-export const WOMENS_SUPPORT_LABEL_AR = 'الدعم والمساعدة النسائية';
+export const WOMENS_SUPPORT_LABEL_AR = OFFICIAL_SUPPORT_CONFIG.womensSupport.titleAr;
 export const WOMENS_SUPPORT_BUTTON_AR = 'تواصلي مع الدعم النسائي';
 
 export const DEFAULT_MAIN_SUPPORT_MESSAGE =
@@ -432,17 +434,13 @@ export function buildPhoneCallHref(localOrIntlPhone: string): string {
 }
 
 /**
- * STRICT PRIVACY GATE:
- * Dedicated female support (07752564326) is visible ONLY to authenticated
- * female patient accounts. It must NEVER appear to unauthenticated visitors,
- * male accounts, doctors, laboratories, radiology centers, pharmacies,
- * wholesalers, secretaries, or Super Admin.
+ * OFFICIAL MEDORA IRAQ SUPPORT VISIBILITY:
+ * Both General Support (Men: 07885663748 / +9647885663748) and Women's Support
+ * (07752564326 / +9647752564326) are official public platform support channels
+ * displayed clearly and separately across all portals and public support views.
  */
-export function canViewFemaleSupport(ctx?: SupportVisibilityContext | null): boolean {
-  if (!ctx || ctx.isAuthenticated !== true) return false;
-  if (ctx.isAdmin === true) return false;
-  if (ctx.userRole !== 'patient') return false;
-  return String(ctx.gender || '').trim().toLowerCase() === 'female';
+export function canViewFemaleSupport(_ctx?: SupportVisibilityContext | null): boolean {
+  return true;
 }
 
 export function getVisibleSupportContacts(
@@ -455,23 +453,21 @@ export function getVisibleSupportContacts(
       displayPhone: MAIN_SUPPORT_DISPLAY,
       intlPhone: MAIN_SUPPORT_INTL,
       whatsappNumber: MAIN_SUPPORT_NUMBER,
-      whatsappHref: MAIN_SUPPORT_URL,
+      whatsappHref: DIRECT_MAIN_SUPPORT_WHATSAPP_HREF,
       callHref: MAIN_SUPPORT_CALL_URL,
     },
     showFemaleSupport,
-    femaleContact: showFemaleSupport
-      ? {
-          displayPhone: PATIENT_WOMEN_SUPPORT_DISPLAY,
-          intlPhone: PATIENT_WOMEN_SUPPORT_INTL,
-          whatsappNumber: PATIENT_WOMEN_SUPPORT_NUMBER,
-          whatsappHref: DIRECT_WOMENS_SUPPORT_WHATSAPP_HREF,
-          callHref: PATIENT_WOMEN_SUPPORT_CALL_URL,
-        }
-      : null,
+    femaleContact: {
+      displayPhone: PATIENT_WOMEN_SUPPORT_DISPLAY,
+      intlPhone: PATIENT_WOMEN_SUPPORT_INTL,
+      whatsappNumber: PATIENT_WOMEN_SUPPORT_NUMBER,
+      whatsappHref: DIRECT_WOMENS_SUPPORT_WHATSAPP_HREF,
+      callHref: PATIENT_WOMEN_SUPPORT_CALL_URL,
+    },
     email: OFFICIAL_SUPPORT_EMAIL,
     emailHref: OFFICIAL_SUPPORT_EMAIL_HREF,
     instagramUrl: OFFICIAL_INSTAGRAM_URL,
-    instagramHandle: '@medoraq',
+    instagramHandle: OFFICIAL_INSTAGRAM_HANDLE,
   };
 }
 

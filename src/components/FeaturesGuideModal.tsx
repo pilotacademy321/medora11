@@ -17,6 +17,7 @@ import {
   ArrowRight 
 } from 'lucide-react';
 import { PortalId } from '../types';
+import { isPortalActive } from '../config/portalsConfig';
 
 interface FeaturesGuideModalProps {
   isOpen: boolean;
@@ -37,7 +38,7 @@ export const FeaturesGuideModal: React.FC<FeaturesGuideModalProps> = ({
     {
       portalId: 'patient' as PortalId,
       titleAr: 'بوابة المريض (Medical Health Passport)',
-      descAr: 'ملف صحي رقمي موحد، حجز فوري للمواعيد واستعراض نتائج التحاليل وصور السونار والأشعة مع إمكانية البحث عن الأدوية القريبة.',
+      descAr: 'ملف صحي رقمي موحد، حجز فوري للمواعيد واستعراض نتائج التحاليل مع إمكانية البحث عن الأدوية القريبة.',
       color: 'bg-cyan-500',
       icon: <User size={20} className="text-white" />,
     },
@@ -51,7 +52,7 @@ export const FeaturesGuideModal: React.FC<FeaturesGuideModalProps> = ({
     {
       portalId: 'pharmacy' as PortalId,
       titleAr: 'بوابة الصيدليات الأهلية',
-      descAr: 'صرف الوصفات الطبية برمز QR المشفر، مراقبة المخزون وتواريخ الصلاحية، وطلب الإمدادات بالجملة مباشرة من المذاخر.',
+      descAr: 'صرف الوصفات الطبية برمز QR المشفر، مراقبة المخزون وتواريخ الصلاحية، وإدارة توفر الأدوية.',
       color: 'bg-emerald-500',
       icon: <Pill size={20} className="text-white" />,
     },
@@ -121,7 +122,9 @@ export const FeaturesGuideModal: React.FC<FeaturesGuideModalProps> = ({
         {/* Content list */}
         <div className="p-6 overflow-y-auto space-y-4 max-h-[70vh]">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {features.map((f) => (
+            {features
+              .filter((f) => isPortalActive(f.portalId))
+              .map((f) => (
               <div
                 key={f.portalId}
                 className="p-4 rounded-2xl border border-slate-200 hover:border-slate-300 bg-slate-50/70 hover:bg-white transition-all flex flex-col justify-between group"
@@ -161,7 +164,7 @@ export const FeaturesGuideModal: React.FC<FeaturesGuideModalProps> = ({
         <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between text-xs text-slate-500">
           <div className="flex items-center gap-2">
             <CheckCircle2 size={16} className="text-emerald-600" />
-            <span>{language === 'ar' ? 'جميع البوابات تعمل بشكل متزامن وفوري' : 'All 8 portals operate synchronously'}</span>
+            <span>{language === 'ar' ? 'جميع البوابات المفعّلة تعمل بشكل متزامن وفوري' : 'All 6 active portals operate synchronously'}</span>
           </div>
           <button
             onClick={onClose}

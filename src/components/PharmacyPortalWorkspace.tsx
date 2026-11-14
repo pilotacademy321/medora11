@@ -18,6 +18,7 @@ import { PrescriptionPdfModal } from './PrescriptionPdfModal';
 import { DrugInteractionPanel } from './DrugInteractionPanel';
 import { PrivateMessagingWorkspace } from './PrivateMessagingWorkspace';
 import { logAuditEvent } from '../lib/auditLogger';
+import { isPortalActive } from '../config/portalsConfig';
 import { validateAndCompressImage, formatWhatsAppUrl } from '../utils/mediaUtils';
 import { canUserPrintPharmacyOrder, triggerIsolatedPrint } from '../utils/printingPermissions';
 import { collectScopedPatients, searchScopedPatients, hasValidPhoneNumber } from '../utils/patientSearch';
@@ -348,32 +349,35 @@ export const PharmacyPortalWorkspace: React.FC<PharmacyPortalWorkspaceProps> = (
       ordList.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
       setOrders(ordList);
 
-      // 4. Fetch Wholesale B2B Orders Placed to Warehouses
+      // 4. Fetch Electronic Prescriptions Targeted to this Pharmacy (always active)
       try {
-        const b2bQuery = query(
-          collection(db, 'wholesale_orders'),
-          where('pharmacyId', '==', user.uid)
+        const rxQuery = query(
+          collection(db, 'electronic_prescriptions'),
+          where('targetPharmacyId', '==', user.uid)
         );
-        const b2bSnap = await getDocs(b2bQuery);
-        const b2bList = b2bSnap.docs.map(d => ({ id: d.id, ...d.data() } as WholesaleOrder));
-        b2bList.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-        setB2bOrders(b2bList);
+        const rxSnap = await getDocs(rxQuery);
+        const rxList = rxSnap.docs.map(d => ({ id: d.id, ...d.data() } as ElectronicPrescription));
+        rxList.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        setIncomingPrescriptions(rxList);
+      } catch {
+        setIncomingPrescriptions([]);
+      }
 
-        // 5. Fetch Electronic Prescriptions Targeted to this Pharmacy
+      // 5 & 6. Fetch Wholesale B2B Orders & Accredited Wholesalers (only when Wholesaler portal is active)
+      if (isPortalActive('wholesaler')) {
         try {
-          const rxQuery = query(
-            collection(db, 'electronic_prescriptions'),
-            where('targetPharmacyId', '==', user.uid)
+          const b2bQuery = query(
+            collection(db, 'wholesale_orders'),
+            where('pharmacyId', '==', user.uid)
           );
-          const rxSnap = await getDocs(rxQuery);
-          const rxList = rxSnap.docs.map(d => ({ id: d.id, ...d.data() } as ElectronicPrescription));
-          rxList.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-          setIncomingPrescriptions(rxList);
+          const b2bSnap = await getDocs(b2bQuery);
+          const b2bList = b2bSnap.docs.map(d => ({ id: d.id, ...d.data() } as WholesaleOrder));
+          b2bList.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+          setB2bOrders(b2bList);
         } catch {
-          setIncomingPrescriptions([]);
+          setB2bOrders([]);
         }
 
-        // 6. Fetch Real Accredited Wholesalers from Firestore
         try {
           const wQuery = query(
             collection(db, 'users'),
@@ -396,9 +400,9 @@ export const PharmacyPortalWorkspace: React.FC<PharmacyPortalWorkspaceProps> = (
         } catch (wErr) {
           console.warn('Could not load registered wholesalers:', wErr);
         }
-
-      } catch {
+      } else {
         setB2bOrders([]);
+        setRegisteredWholesalers([]);
       }
 
     } catch (err: unknown) {
@@ -412,6 +416,12 @@ export const PharmacyPortalWorkspace: React.FC<PharmacyPortalWorkspaceProps> = (
   useEffect(() => {
     loadPharmacyData();
   }, [user]);
+
+  useEffect(() => {
+    if (!isPortalActive('wholesaler') && activeTab === 'wholesale_b2b') {
+      setActiveTab('dashboard');
+    }
+  }, [activeTab]);
 
   const showToast = (text: string, type: 'success' | 'error' = 'success') => {
     setFeedbackMsg({ text, type });
@@ -1699,7 +1709,9 @@ export const PharmacyPortalWorkspace: React.FC<PharmacyPortalWorkspaceProps> = (
           { id: 'wholesale_b2b', labelAr: `سوق الجملة والمذاخر (${b2bOrders.length})`, labelEn: `Wholesale Market (${b2bOrders.length})`, icon: Building2 },
           { id: 'messages', labelAr: 'الرسائل الخاصة', labelEn: 'Messages', icon: MessageSquare },
           { id: 'settings', labelAr: 'إعدادات الصيدلية والترخيص', labelEn: 'Pharmacy Profile & Hours', icon: Settings },
-        ].map((tab) => {
+        ]
+          .filter((tab) => tab.id !== 'wholesale_b2b' || isPortalActive('wholesaler'))
+          .map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
           return (
@@ -2506,7 +2518,7 @@ export const PharmacyPortalWorkspace: React.FC<PharmacyPortalWorkspaceProps> = (
       )}
 
       {/* TAB: WHOLESALE B2B PROCUREMENT MARKET */}
-      {activeTab === 'wholesale_b2b' && (
+      {activeTab === 'wholesale_b2b' && isPortalActive('wholesaler') && (
         <div className="space-y-6">
           {/* Top B2B Header & Cart Trigger Banner */}
           <div className="bg-gradient-to-r from-teal-900 to-slate-900 rounded-3xl p-6 sm:p-8 text-white shadow-lg flex flex-col md:flex-row md:items-center justify-between gap-6">

@@ -9,6 +9,8 @@ import {
 } from '../lib/medicalStorage';
 import { recordRealMetricEvent } from '../lib/platformMetrics';
 import { generateUniqueMedicalId } from '../utils/medicalId';
+import { isPortalActive } from '../config/portalsConfig';
+import { cachedFetch } from '../lib/firestoreCache';
 import { 
   UserProfile,
   PatientProfile, 
@@ -482,11 +484,13 @@ export const PatientPortalWorkspace: React.FC<PatientPortalWorkspaceProps> = ({ 
         }));
       }
 
-      // 2. Fetch Doctors Directory & Patient Appointments
+      // 2. Fetch Doctors Directory & Patient Appointments (cached across tab/workspace switches)
       let docsList: DoctorProfile[] = [];
       try {
-        const docsSnap = await getDocs(collection(db, 'doctor_profiles'));
-        docsList = docsSnap.docs.map(d => ({ doctorId: d.id, ...d.data() } as DoctorProfile));
+        docsList = await cachedFetch('patient_dir_doctors', 60_000, async () => {
+          const docsSnap = await getDocs(collection(db, 'doctor_profiles'));
+          return docsSnap.docs.map(d => ({ doctorId: d.id, ...d.data() } as DoctorProfile));
+        });
       } catch {
         // ignore read error
       }
@@ -538,8 +542,10 @@ export const PatientPortalWorkspace: React.FC<PatientPortalWorkspaceProps> = ({ 
 
       let pharmList: PharmacyProfile[] = [];
       try {
-        const pharmSnap = await getDocs(collection(db, 'pharmacy_profiles'));
-        pharmList = pharmSnap.docs.map(d => ({ pharmacyId: d.id, ...d.data() } as PharmacyProfile));
+        pharmList = await cachedFetch('patient_dir_pharmacies', 60_000, async () => {
+          const pharmSnap = await getDocs(collection(db, 'pharmacy_profiles'));
+          return pharmSnap.docs.map(d => ({ pharmacyId: d.id, ...d.data() } as PharmacyProfile));
+        });
       } catch {
         // fallback
       }
@@ -591,8 +597,10 @@ export const PatientPortalWorkspace: React.FC<PatientPortalWorkspaceProps> = ({ 
       // 4. Fetch Laboratories, Tests, Bookings, & Results
       let labsArr: LabProfile[] = [];
       try {
-        const labsSnap = await getDocs(collection(db, 'lab_profiles'));
-        labsArr = labsSnap.docs.map(d => ({ labId: d.id, ...d.data() } as LabProfile));
+        labsArr = await cachedFetch('patient_dir_labs', 60_000, async () => {
+          const labsSnap = await getDocs(collection(db, 'lab_profiles'));
+          return labsSnap.docs.map(d => ({ labId: d.id, ...d.data() } as LabProfile));
+        });
       } catch {
         // ignore read error
       }
@@ -663,52 +671,61 @@ export const PatientPortalWorkspace: React.FC<PatientPortalWorkspaceProps> = ({ 
       labResults.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
       setPatientLabResults(labResults);
 
-      // 5. Fetch Radiology Centers, Services, Bookings, & Reports
-      let radCenters: RadiologyProfile[] = [];
-      try {
-        const radCentersSnap = await getDocs(collection(db, 'radiology_profiles'));
-        radCenters = radCentersSnap.docs.map(d => ({ centerId: d.id, ...d.data() } as RadiologyProfile));
-      } catch {
-        // ignore read error
-      }
-      setRadiologyCentersList(radCenters);
+      // 5. Fetch Radiology Centers, Services, Bookings, & Reports (Skipped when Radiology portal is suspended)
+      if (isPortalActive('radiology')) {
+        let radCenters: RadiologyProfile[] = [];
+        try {
+          radCenters = await cachedFetch('patient_dir_radiology', 60_000, async () => {
+            const radCentersSnap = await getDocs(collection(db, 'radiology_profiles'));
+            return radCentersSnap.docs.map(d => ({ centerId: d.id, ...d.data() } as RadiologyProfile));
+          });
+        } catch {
+          // ignore read error
+        }
+        setRadiologyCentersList(radCenters);
 
-      let radServices: RadiologyService[] = [];
-      try {
-        const radServicesSnap = await getDocs(collection(db, 'radiology_services'));
-        radServices = radServicesSnap.docs.map(d => ({ id: d.id, ...d.data() } as RadiologyService));
-      } catch {
-        // ignore read error
-      }
-      setRadiologyServicesList(radServices);
+        let radServices: RadiologyService[] = [];
+        try {
+          const radServicesSnap = await getDocs(collection(db, 'radiology_services'));
+          radServices = radServicesSnap.docs.map(d => ({ id: d.id, ...d.data() } as RadiologyService));
+        } catch {
+          // ignore read error
+        }
+        setRadiologyServicesList(radServices);
 
-      let radBookings: RadiologyBooking[] = [];
-      try {
-        const radBookQuery = query(
-          collection(db, 'radiology_bookings'),
-          where('patientId', '==', user.uid)
-        );
-        const radBookSnap = await getDocs(radBookQuery);
-        radBookings = radBookSnap.docs.map(d => ({ id: d.id, ...d.data() } as RadiologyBooking));
-      } catch {
-        // fallback
-      }
-      radBookings.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-      setPatientRadiologyBookings(radBookings);
+        let radBookings: RadiologyBooking[] = [];
+        try {
+          const radBookQuery = query(
+            collection(db, 'radiology_bookings'),
+            where('patientId', '==', user.uid)
+          );
+          const radBookSnap = await getDocs(radBookQuery);
+          radBookings = radBookSnap.docs.map(d => ({ id: d.id, ...d.data() } as RadiologyBooking));
+        } catch {
+          // fallback
+        }
+        radBookings.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        setPatientRadiologyBookings(radBookings);
 
-      let radReports: RadiologyReport[] = [];
-      try {
-        const radRepQuery = query(
-          collection(db, 'radiology_reports'),
-          where('patientId', '==', user.uid)
-        );
-        const radRepSnap = await getDocs(radRepQuery);
-        radReports = radRepSnap.docs.map(d => ({ id: d.id, ...d.data() } as RadiologyReport));
-      } catch {
-        // fallback
+        let radReports: RadiologyReport[] = [];
+        try {
+          const radRepQuery = query(
+            collection(db, 'radiology_reports'),
+            where('patientId', '==', user.uid)
+          );
+          const radRepSnap = await getDocs(radRepQuery);
+          radReports = radRepSnap.docs.map(d => ({ id: d.id, ...d.data() } as RadiologyReport));
+        } catch {
+          // fallback
+        }
+        radReports.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        setPatientRadiologyReports(radReports);
+      } else {
+        setRadiologyCentersList([]);
+        setRadiologyServicesList([]);
+        setPatientRadiologyBookings([]);
+        setPatientRadiologyReports([]);
       }
-      radReports.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-      setPatientRadiologyReports(radReports);
 
       // 6. Fetch Personal Uploaded Medical Records
       let recList: MedicalRecord[] = [];
@@ -800,20 +817,24 @@ export const PatientPortalWorkspace: React.FC<PatientPortalWorkspaceProps> = ({ 
       labOrdersList.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
       setPatientLabOrders(labOrdersList);
 
-      // 10. Fetch Doctor Radiology Orders
-      let radOrdersList: RadiologyOrder[] = [];
-      try {
-        const radOrdQuery = query(
-          collection(db, 'radiology_orders'),
-          where('patientId', '==', user.uid)
-        );
-        const radOrdSnap = await getDocs(radOrdQuery);
-        radOrdersList = radOrdSnap.docs.map(d => ({ id: d.id, ...d.data() } as RadiologyOrder));
-      } catch (e) {
-        console.warn('Radiology orders fetch notice:', e);
+      // 10. Fetch Doctor Radiology Orders (Skipped when Radiology portal is suspended)
+      if (isPortalActive('radiology')) {
+        let radOrdersList: RadiologyOrder[] = [];
+        try {
+          const radOrdQuery = query(
+            collection(db, 'radiology_orders'),
+            where('patientId', '==', user.uid)
+          );
+          const radOrdSnap = await getDocs(radOrdQuery);
+          radOrdersList = radOrdSnap.docs.map(d => ({ id: d.id, ...d.data() } as RadiologyOrder));
+        } catch (e) {
+          console.warn('Radiology orders fetch notice:', e);
+        }
+        radOrdersList.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        setPatientRadiologyOrders(radOrdersList);
+      } else {
+        setPatientRadiologyOrders([]);
       }
-      radOrdersList.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-      setPatientRadiologyOrders(radOrdersList);
 
     } catch (err: unknown) {
       console.warn('Patient workspace loader notice:', err);
@@ -826,6 +847,12 @@ export const PatientPortalWorkspace: React.FC<PatientPortalWorkspaceProps> = ({ 
   useEffect(() => {
     loadPatientWorkspaceData();
   }, [user]);
+
+  useEffect(() => {
+    if (!isPortalActive('radiology') && activeTab === 'radiology') {
+      setActiveTab('dashboard');
+    }
+  }, [activeTab]);
 
   // ==========================================
   // ACTION: OPEN BOOKING CARD CONTACT MODAL
@@ -1612,15 +1639,27 @@ export const PatientPortalWorkspace: React.FC<PatientPortalWorkspaceProps> = ({ 
           { id: 'dashboard', labelAr: 'نظرة عامة والجواز', labelEn: 'Passport', icon: Activity },
           { id: 'doctors', labelAr: `الأطباء والمواعيد (${doctorAppointments.length})`, labelEn: `Doctors (${doctorAppointments.length})`, icon: Stethoscope },
           { id: 'prescriptions', labelAr: `الوصفات الطبية (${patientPrescriptions.length})`, labelEn: `e-Prescriptions (${patientPrescriptions.length})`, icon: Pill },
-          { id: 'referrals', labelAr: `التحويلات والفحوصات (${patientLabOrders.length + patientRadiologyOrders.length})`, labelEn: `Referrals (${patientLabOrders.length + patientRadiologyOrders.length})`, icon: FileText },
+          {
+            id: 'referrals',
+            labelAr: `التحويلات والفحوصات (${patientLabOrders.length + (isPortalActive('radiology') ? patientRadiologyOrders.length : 0)})`,
+            labelEn: `Referrals (${patientLabOrders.length + (isPortalActive('radiology') ? patientRadiologyOrders.length : 0)})`,
+            icon: FileText,
+          },
           { id: 'pharmacy', labelAr: `دليل الأدوية والطلبات (${patientPharmacyOrders.length})`, labelEn: `Medicines (${patientPharmacyOrders.length})`, icon: ShoppingBag },
           { id: 'labs', labelAr: `التحاليل والمختبرات (${patientLabBookings.length})`, labelEn: `Lab Tests (${patientLabBookings.length})`, icon: FlaskConical },
           { id: 'radiology', labelAr: `الأشعة والسونار (${patientRadiologyBookings.length})`, labelEn: `Radiology (${patientRadiologyBookings.length})`, icon: Scan },
-          { id: 'records', labelAr: `سجلي الطبي والتقارير (${personalRecords.length + patientRadiologyReports.length + patientLabResults.length})`, labelEn: `My Records (${personalRecords.length + patientRadiologyReports.length + patientLabResults.length})`, icon: FileCheck2 },
+          {
+            id: 'records',
+            labelAr: `سجلي الطبي والتقارير (${personalRecords.length + patientLabResults.length + (isPortalActive('radiology') ? patientRadiologyReports.length : 0)})`,
+            labelEn: `My Records (${personalRecords.length + patientLabResults.length + (isPortalActive('radiology') ? patientRadiologyReports.length : 0)})`,
+            icon: FileCheck2,
+          },
           { id: 'messages', labelAr: 'الرسائل الخاصة', labelEn: 'Messages', icon: MessageSquare },
           { id: 'notifications', labelAr: `التنبيهات (${notifications.length})`, labelEn: `Alerts (${notifications.length})`, icon: Bell },
           { id: 'profile', labelAr: 'بيانات الطوارئ والصحة', labelEn: 'Health Profile', icon: Settings },
-        ].map((tab) => {
+        ]
+          .filter((tab) => tab.id !== 'radiology' || isPortalActive('radiology'))
+          .map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
           return (
@@ -1675,10 +1714,11 @@ export const PatientPortalWorkspace: React.FC<PatientPortalWorkspaceProps> = ({ 
                 <FileCheck2 size={16} className="text-emerald-600" />
               </div>
               <div className="text-2xl sm:text-3xl font-black text-slate-900 font-mono">
-                {patientRadiologyReports.length + patientLabResults.length + personalRecords.length}
+                {(isPortalActive('radiology') ? patientRadiologyReports.length : 0) + patientLabResults.length + personalRecords.length}
               </div>
               <span className="text-[11px] text-emerald-700 mt-1 block">
-                {patientRadiologyReports.length} {language === 'ar' ? 'أشعة' : 'scans'} · {patientLabResults.length} {language === 'ar' ? 'تحاليل' : 'labs'}
+                {isPortalActive('radiology') ? `${patientRadiologyReports.length} ${language === 'ar' ? 'أشعة' : 'scans'} · ` : ''}
+                {patientLabResults.length} {language === 'ar' ? 'تحاليل' : 'labs'}
               </span>
             </div>
 
@@ -1879,7 +1919,7 @@ export const PatientPortalWorkspace: React.FC<PatientPortalWorkspaceProps> = ({ 
           </div>
 
           {/* Quick Access Grid to Services */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className={`grid grid-cols-1 md:grid-cols-2 ${isPortalActive('radiology') ? 'lg:grid-cols-4' : 'lg:grid-cols-3'} gap-4`}>
             <div 
               onClick={() => setActiveTab('doctors')}
               className="p-5 rounded-2xl bg-white border border-slate-200 hover:border-sky-400 hover:shadow-md transition-all cursor-pointer flex flex-col justify-between"
@@ -1934,23 +1974,25 @@ export const PatientPortalWorkspace: React.FC<PatientPortalWorkspaceProps> = ({ 
               </span>
             </div>
 
-            <div 
-              onClick={() => setActiveTab('radiology')}
-              className="p-5 rounded-2xl bg-white border border-slate-200 hover:border-cyan-400 hover:shadow-md transition-all cursor-pointer flex flex-col justify-between"
-            >
-              <div>
-                <div className="w-10 h-10 rounded-xl bg-cyan-100 text-cyan-700 flex items-center justify-center mb-3">
-                  <Scan size={20} />
+            {isPortalActive('radiology') && (
+              <div 
+                onClick={() => setActiveTab('radiology')}
+                className="p-5 rounded-2xl bg-white border border-slate-200 hover:border-cyan-400 hover:shadow-md transition-all cursor-pointer flex flex-col justify-between"
+              >
+                <div>
+                  <div className="w-10 h-10 rounded-xl bg-cyan-100 text-cyan-700 flex items-center justify-center mb-3">
+                    <Scan size={20} />
+                  </div>
+                  <h4 className="font-bold text-slate-900 text-base">{language === 'ar' ? 'الأشعة والسونار' : 'Radiology & Scans'}</h4>
+                  <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                    {language === 'ar' ? 'فحوصات السونار، الرنين المغناطيسي، المفراس والأشعة السينية.' : 'Schedule ultrasound, MRI, CT scan and X-ray imaging.'}
+                  </p>
                 </div>
-                <h4 className="font-bold text-slate-900 text-base">{language === 'ar' ? 'الأشعة والسونار' : 'Radiology & Scans'}</h4>
-                <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-                  {language === 'ar' ? 'فحوصات السونار، الرنين المغناطيسي، المفراس والأشعة السينية.' : 'Schedule ultrasound, MRI, CT scan and X-ray imaging.'}
-                </p>
+                <span className="text-xs font-bold text-cyan-700 mt-4 flex items-center gap-1">
+                  {language === 'ar' ? 'مراكز الأشعة ←' : 'Imaging Centers →'}
+                </span>
               </div>
-              <span className="text-xs font-bold text-cyan-700 mt-4 flex items-center gap-1">
-                {language === 'ar' ? 'مراكز الأشعة ←' : 'Imaging Centers →'}
-              </span>
-            </div>
+            )}
           </div>
         </div>
       )}
@@ -2372,10 +2414,16 @@ export const PatientPortalWorkspace: React.FC<PatientPortalWorkspaceProps> = ({ 
               {/* Referral Type Filter */}
               <div className="flex items-center gap-1.5 bg-slate-100 p-1.5 rounded-xl text-xs font-bold">
                 {[
-                  { id: 'all', labelAr: `الكل (${patientLabOrders.length + patientRadiologyOrders.length})`, labelEn: 'All' },
+                  {
+                    id: 'all',
+                    labelAr: `الكل (${patientLabOrders.length + (isPortalActive('radiology') ? patientRadiologyOrders.length : 0)})`,
+                    labelEn: 'All',
+                  },
                   { id: 'lab', labelAr: `المختبر (${patientLabOrders.length})`, labelEn: 'Labs' },
                   { id: 'radiology', labelAr: `الأشعة (${patientRadiologyOrders.length})`, labelEn: 'Radiology' },
-                ].map(f => (
+                ]
+                  .filter((f) => f.id !== 'radiology' || isPortalActive('radiology'))
+                  .map(f => (
                   <button
                     key={f.id}
                     onClick={() => setReferralFilterType(f.id as any)}
@@ -2393,14 +2441,16 @@ export const PatientPortalWorkspace: React.FC<PatientPortalWorkspaceProps> = ({ 
 
             {/* Content List */}
             {((referralFilterType === 'all' || referralFilterType === 'lab') ? patientLabOrders : []).length === 0 &&
-             ((referralFilterType === 'all' || referralFilterType === 'radiology') ? patientRadiologyOrders : []).length === 0 ? (
+             (isPortalActive('radiology') && (referralFilterType === 'all' || referralFilterType === 'radiology') ? patientRadiologyOrders : []).length === 0 ? (
               <div className="text-center py-12 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
                 <FileCheck2 size={36} className="mx-auto text-slate-300 mb-2" />
                 <p className="text-sm font-bold text-slate-600">
                   {language === 'ar' ? 'لا توجد طلبات تحويل مطابقة للتصفية الحالية' : 'No medical orders found'}
                 </p>
                 <p className="text-xs text-slate-400 mt-1">
-                  {language === 'ar' ? 'عند قيام الطبيب بإحالتك لمختبر أو مركز أشعة، ستظهر تفاصيل التحويل هنا.' : 'Diagnostic orders from doctors will appear here in real-time.'}
+                  {language === 'ar'
+                    ? (isPortalActive('radiology') ? 'عند قيام الطبيب بإحالتك لمختبر أو مركز أشعة، ستظهر تفاصيل التحويل هنا.' : 'عند قيام الطبيب بإحالتك لمختبر طبي، ستظهر تفاصيل التحويل هنا.')
+                    : 'Diagnostic orders from doctors will appear here in real-time.'}
                 </p>
               </div>
             ) : (
@@ -2490,7 +2540,7 @@ export const PatientPortalWorkspace: React.FC<PatientPortalWorkspaceProps> = ({ 
                 ))}
 
                 {/* Radiology Orders */}
-                {(referralFilterType === 'all' || referralFilterType === 'radiology') && patientRadiologyOrders.map(ord => (
+                {isPortalActive('radiology') && (referralFilterType === 'all' || referralFilterType === 'radiology') && patientRadiologyOrders.map(ord => (
                   <div key={ord.id} className="p-5 rounded-2xl bg-white border border-slate-200 hover:border-cyan-300 transition-all shadow-xs space-y-3">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b border-slate-100">
                       <div className="flex items-center gap-2">
@@ -3065,7 +3115,7 @@ export const PatientPortalWorkspace: React.FC<PatientPortalWorkspaceProps> = ({ 
       {/* ==================================================== */}
       {/* TAB 5: RADIOLOGY & ULTRASOUND SERVICES */}
       {/* ==================================================== */}
-      {activeTab === 'radiology' && (
+      {activeTab === 'radiology' && isPortalActive('radiology') && (
         <div className="space-y-6">
           <div className="bg-white rounded-3xl p-6 sm:p-8 border border-slate-200 shadow-sm space-y-4">
             <div className="pb-3 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -3254,8 +3304,12 @@ export const PatientPortalWorkspace: React.FC<PatientPortalWorkspaceProps> = ({ 
                 </h2>
                 <p className="text-xs text-slate-500 mt-1">
                   {language === 'ar'
-                    ? 'تقارير الأشعة المعتمدة، نتائج التحاليل المخبرية، والوثائق والوصفات المرفوعة من قبلك.'
-                    : 'Certified radiology reports, lab test findings, and personal medical records protected in Firestore.'}
+                    ? (isPortalActive('radiology')
+                        ? 'تقارير الأشعة المعتمدة، نتائج التحاليل المخبرية، والوثائق والوصفات المرفوعة من قبلك.'
+                        : 'نتائج التحاليل المخبرية المعتمدة، والوثائق والوصفات المرفوعة من قبلك.')
+                    : (isPortalActive('radiology')
+                        ? 'Certified radiology reports, lab test findings, and personal medical records protected in Firestore.'
+                        : 'Certified lab test findings and personal medical records protected in Firestore.')}
                 </p>
               </div>
 
@@ -3269,56 +3323,58 @@ export const PatientPortalWorkspace: React.FC<PatientPortalWorkspaceProps> = ({ 
             </div>
 
             {/* Official Radiology Reports Section */}
-            <div>
-              <h3 className="font-bold text-sm text-slate-800 mb-3 flex items-center gap-2">
-                <Scan size={16} className="text-cyan-600" />
-                <span>{language === 'ar' ? 'تقارير الأشعة والسونار الصادرة من المراكز المعتمدة:' : 'Certified Radiology Diagnostic Reports:'}</span>
-                <span className="text-xs text-slate-400 font-mono">({patientRadiologyReports.length})</span>
-              </h3>
+            {isPortalActive('radiology') && (
+              <div>
+                <h3 className="font-bold text-sm text-slate-800 mb-3 flex items-center gap-2">
+                  <Scan size={16} className="text-cyan-600" />
+                  <span>{language === 'ar' ? 'تقارير الأشعة والسونار الصادرة من المراكز المعتمدة:' : 'Certified Radiology Diagnostic Reports:'}</span>
+                  <span className="text-xs text-slate-400 font-mono">({patientRadiologyReports.length})</span>
+                </h3>
 
-              {patientRadiologyReports.length === 0 ? (
-                <div className="p-6 rounded-2xl bg-slate-50 text-center text-slate-400 text-xs">
-                  {language === 'ar' ? 'لا توجد تقارير أشعة منشورة حتى الآن.' : 'No certified radiology reports published yet.'}
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {patientRadiologyReports.map((rep) => (
-                    <div
-                      key={rep.id}
-                      className="p-5 rounded-2xl border border-slate-200 bg-white hover:border-cyan-300 transition-all flex flex-col justify-between"
-                    >
-                      <div>
-                        <div className="flex items-center justify-between gap-2 mb-2">
-                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-cyan-100 text-cyan-800 uppercase font-mono">
-                            {rep.modality}
-                          </span>
-                          <span className="text-xs text-slate-400 font-mono">{rep.createdAt.split('T')[0]}</span>
+                {patientRadiologyReports.length === 0 ? (
+                  <div className="p-6 rounded-2xl bg-slate-50 text-center text-slate-400 text-xs">
+                    {language === 'ar' ? 'لا توجد تقارير أشعة منشورة حتى الآن.' : 'No certified radiology reports published yet.'}
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {patientRadiologyReports.map((rep) => (
+                      <div
+                        key={rep.id}
+                        className="p-5 rounded-2xl border border-slate-200 bg-white hover:border-cyan-300 transition-all flex flex-col justify-between"
+                      >
+                        <div>
+                          <div className="flex items-center justify-between gap-2 mb-2">
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-cyan-100 text-cyan-800 uppercase font-mono">
+                              {rep.modality}
+                            </span>
+                            <span className="text-xs text-slate-400 font-mono">{rep.createdAt.split('T')[0]}</span>
+                          </div>
+
+                          <h4 className="font-bold text-base text-slate-900 mb-1">{rep.serviceName}</h4>
+                          <div className="text-xs text-slate-500 mb-2">{rep.centerName}</div>
+
+                          <div className="p-3 rounded-xl bg-slate-50 text-xs text-slate-700 mb-3 line-clamp-3">
+                            <strong>{language === 'ar' ? 'الخلاصة التشخيصية (Impression):' : 'Impression:'}</strong>{' '}
+                            {rep.impression}
+                          </div>
                         </div>
 
-                        <h4 className="font-bold text-base text-slate-900 mb-1">{rep.serviceName}</h4>
-                        <div className="text-xs text-slate-500 mb-2">{rep.centerName}</div>
-
-                        <div className="p-3 rounded-xl bg-slate-50 text-xs text-slate-700 mb-3 line-clamp-3">
-                          <strong>{language === 'ar' ? 'الخلاصة التشخيصية (Impression):' : 'Impression:'}</strong>{' '}
-                          {rep.impression}
+                        <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+                          <span className="text-xs text-slate-500">{rep.radiologistName}</span>
+                          <button
+                            onClick={() => setSelectedRadiologyReportModal(rep)}
+                            className="px-3.5 py-1.5 rounded-xl bg-cyan-600 hover:bg-cyan-700 text-white font-bold text-xs flex items-center gap-1 cursor-pointer"
+                          >
+                            <Eye size={13} />
+                            <span>{language === 'ar' ? 'فتح التقرير الرسمي' : 'View Full Report'}</span>
+                          </button>
                         </div>
                       </div>
-
-                      <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
-                        <span className="text-xs text-slate-500">{rep.radiologistName}</span>
-                        <button
-                          onClick={() => setSelectedRadiologyReportModal(rep)}
-                          className="px-3.5 py-1.5 rounded-xl bg-cyan-600 hover:bg-cyan-700 text-white font-bold text-xs flex items-center gap-1 cursor-pointer"
-                        >
-                          <Eye size={13} />
-                          <span>{language === 'ar' ? 'فتح التقرير الرسمي' : 'View Full Report'}</span>
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Official Laboratory Results Section */}
             <div className="pt-4 border-t border-slate-100">
@@ -4509,7 +4565,9 @@ export const PatientPortalWorkspace: React.FC<PatientPortalWorkspaceProps> = ({ 
                     className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm bg-white"
                   >
                     <option value="lab_result">{language === 'ar' ? 'تحليل مخبري' : 'Lab Result'}</option>
-                    <option value="radiology_report">{language === 'ar' ? 'تقرير أشعة' : 'Radiology Report'}</option>
+                    {isPortalActive('radiology') && (
+                      <option value="radiology_report">{language === 'ar' ? 'تقرير أشعة' : 'Radiology Report'}</option>
+                    )}
                     <option value="prescription">{language === 'ar' ? 'وصفة طبية' : 'Prescription'}</option>
                     <option value="clinical_note">{language === 'ar' ? 'تقرير طبي عام' : 'Clinical Note'}</option>
                   </select>

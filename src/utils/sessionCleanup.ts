@@ -6,6 +6,8 @@
  * into a new login or registration session.
  */
 
+import { clearFirestoreMemoryCache } from '../lib/firestoreCache';
+
 const KNOWN_USER_STORAGE_KEYS = [
   'm737_demo_role_v1',
   'm737_device_fcm_token_v1',
@@ -30,6 +32,7 @@ export interface SessionCleanupOptions {
 export async function clearAllUserSessionCaches(
   options: SessionCleanupOptions = {}
 ): Promise<string[]> {
+  clearFirestoreMemoryCache();
   const preserve = new Set(options.preserveKeys || []);
   const removedKeys: string[] = [];
 

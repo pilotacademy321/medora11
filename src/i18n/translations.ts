@@ -1,3 +1,5 @@
+import { OFFICIAL_SUPPORT_CONFIG } from '../config/officialSupportConfig';
+
 export const translations = {
   ar: {
     brandName: 'ميدورا العراق',
@@ -20,14 +22,14 @@ export const translations = {
     hero: {
       badge: 'المنظومة الصحية الرقمية المتكاملة في العراق',
       headline: 'منظومة الرعاية والخدمات الطبية الموحدة',
-      subtitle: 'تجمع بين الأطباء والمختبرات والأشعة والصيدليات والمرضى في مكان واحد لخدمة صحية أفضل.',
-      secondarySubtitle: 'Bringing doctors, clinics, laboratories, radiology, pharmacies, and patients together.',
+      subtitle: 'تجمع بين الأطباء والمختبرات والصيدليات والمرضى في مكان واحد لخدمة صحية أفضل.',
+      secondarySubtitle: 'Bringing doctors, clinics, laboratories, pharmacies, and patients together.',
       getStartedBtn: 'ابدأ الآن',
       learnMoreBtn: 'استكشف البوابات',
       slogan: 'YOUR HEALTH • OUR PRIORITY — صحتك أولويتنا',
       stats: {
-        portalsCount: '٨ بوابات مستقلة',
-        portalsDesc: 'تغطي كافة الاحتياجات الصحية',
+        portalsCount: '٦ بوابات مفعّلة',
+        portalsDesc: 'بوابات مستقلة للرعاية والتشخيص والدواء',
         iraqCoverage: 'تغطية المحافظات',
         iraqCoverageDesc: 'بغداد وكافة المدن العراقية',
         precision: 'دقة وموثوقية',
@@ -36,7 +38,7 @@ export const translations = {
     },
     portalsSection: {
       kicker: 'البوابات التشغيلية المستقلة',
-      title: 'منظومة البوابات الطبية الثمانية',
+      title: 'منظومة البوابات الطبية المفعّلة',
       description: 'تم تصميم كل بوابة كمركز تشغيلي مستقل يلبي الاحتياجات المحددة لشركاء المنظومة الطبية مع الحفاظ على الربط المتكامل والتنسيق الفوري.',
       openPortal: 'دخول البوابة',
       shellNotice: 'بوابات المنظومة الصحية الموحدة',
@@ -60,12 +62,12 @@ export const translations = {
       kicker: 'رؤيتنا الوطنية',
       title: 'من نحن - منظومة الرعاية الطبية الموحدة',
       lead: 'منصة طبية عراقية تجمع بين شرف المهنة الطبية والتكنولوجيا السحابية المتقدمة لخدمة كل مريض وكادر صحي.',
-      p1: 'انطلقت المنظومة من حاجة ماسة لإنهاء الانعزال بين مفاصل القطاع الصحي في العراق، وتيسير الربط بين عيادات الأطباء، ومختبرات التحاليل، ومراكز الأشعة والسونار، والصيدليات ومذاخر الأدوية.',
+      p1: 'انطلقت المنظومة من حاجة ماسة لإنهاء الانعزال بين مفاصل القطاع الصحي في العراق، وتيسير الربط بين عيادات الأطباء، ومختبرات التحاليل، والصيدليات الأهلية والمراجعين.',
       p2: 'نهدف إلى ترسيخ التواصل الطبي السلس والفوري، وتوفير بيئة رقمية متكاملة تربط المراكز التخصصية في بغداد والبصرة والموصل وأربيل والنجف وكافة أرجاء الوطن في فضاء رقمي موحد وآمن.',
       values: [
         {
           title: 'الربط المباشر',
-          desc: 'إنهاء الفجوة بين الأطباء والمختبرات والأشعة والصيدليات لتدفق أسرع للمعلومة الطبية.'
+          desc: 'إنهاء الفجوة بين الأطباء والمختبرات والصيدليات لتدفق أسرع للمعلومة الطبية.'
         },
         {
           title: 'الموثوقية الفائقة',
@@ -80,7 +82,7 @@ export const translations = {
     services: {
       kicker: 'تكامل القطاعات الصحية',
       title: 'خدمات المنظومة الطبية الموحدة',
-      subtitle: 'ثماني ركائز تشغيلية متكاملة تغطي دورة الرعاية الصحية والتشخيص والدواء والإدارة المركزية بأعلى المعايير.',
+      subtitle: 'ست ركائز تشغيلية مفعّلة تغطي دورة الرعاية الصحية والتشخيص المخبري والدواء والإدارة المركزية بأعلى المعايير.',
       items: [
         {
           id: 'patients',
@@ -91,13 +93,13 @@ export const translations = {
         {
           id: 'doctors',
           title: '٢. الطبيب والعيادات التخصصية',
-          desc: 'إدارة العيادة والمواعيد، إصدار الوصفات الطبية الإلكترونية، وإحالة المرضى إلى المختبرات ومراكز الأشعة مع متابعة فورية.',
+          desc: 'إدارة العيادة والمواعيد، إصدار الوصفات الطبية الإلكترونية، وإحالة المرضى إلى المختبرات الطبية المعتمدة مع متابعة فورية.',
           portalId: 'doctor' as const,
         },
         {
           id: 'pharmacy',
           title: '٣. الصيدليات الأهلية',
-          desc: 'صرف الوصفات الإلكترونية المعتمدة ومنع تكرار الصرف، وتحديث توفر الأدوية، وطلب المستلزمات مباشرة من المذاخر.',
+          desc: 'صرف الوصفات الإلكترونية المعتمدة ومنع تكرار الصرف، وتحديث توفر الأدوية في المخزون وتقارير الصرف.',
           portalId: 'pharmacy' as const,
         },
         {
@@ -133,26 +135,29 @@ export const translations = {
       ]
     },
     contact: {
-      kicker: 'قنوات التواصل المعتمدة',
+      kicker: 'مركز الدعم الرسمي المعتمد',
       title: 'الدعم الفني وتواصل المراكز',
-      subtitle: 'نسعد باستقبال استفسارات الأطباء والمراكز الصحية والمراجعين عبر وسائل الاتصال الرسمية للمنصة.',
-      whatsappTitle: 'تواصل معنا عبر واتساب',
-      whatsappNumber: '07885663748',
-      whatsappAction: 'مراسلة عبر واتساب الآن',
-      instagramTitle: 'حساب إنستغرام الرسمي',
-      instagramHandle: '@medoraq',
-      instagramUrl: 'https://www.instagram.com/medoraq/',
-      instagramAction: 'متابعة @medoraq على إنستغرام',
-      emailTitle: 'البريد الإلكتروني للدعم',
-      emailAddress: 'support@medora-iq.com',
-      emailAction: 'إرسال بريد إلكتروني',
-      supportBadge: 'الدعم الفني: نحن هنا لمساعدتك دائماً',
+      subtitle: 'نسعد باستقبال استفسارات الأطباء والمراكز الصحية والمراجعين عبر وسائل الاتصال الرسمية المعتمدة لمنصة MEDORA العراق.',
+      whatsappTitle: OFFICIAL_SUPPORT_CONFIG.generalSupport.titleAr,
+      whatsappNumber: OFFICIAL_SUPPORT_CONFIG.generalSupport.displayPhone,
+      whatsappAction: OFFICIAL_SUPPORT_CONFIG.generalSupport.whatsappCtaAr,
+      womensWhatsappTitle: OFFICIAL_SUPPORT_CONFIG.womensSupport.titleAr,
+      womensWhatsappNumber: OFFICIAL_SUPPORT_CONFIG.womensSupport.displayPhone,
+      womensWhatsappAction: OFFICIAL_SUPPORT_CONFIG.womensSupport.whatsappCtaAr,
+      instagramTitle: OFFICIAL_SUPPORT_CONFIG.instagram.titleAr,
+      instagramHandle: OFFICIAL_SUPPORT_CONFIG.instagram.handle,
+      instagramUrl: OFFICIAL_SUPPORT_CONFIG.instagram.url,
+      instagramAction: OFFICIAL_SUPPORT_CONFIG.instagram.ctaAr,
+      emailTitle: OFFICIAL_SUPPORT_CONFIG.email.titleAr,
+      emailAddress: OFFICIAL_SUPPORT_CONFIG.email.address,
+      emailAction: OFFICIAL_SUPPORT_CONFIG.email.ctaAr,
+      supportBadge: 'مركز الدعم الرسمي MEDORA — نحن هنا لمساعدتك دائماً',
       formTitle: 'طلب استفسار أو انضمام مركز صحي',
       formDesc: 'املأ النموذج وسيقوم فريق الدعم الفني بمتابعة استفسارك والتواصل معك مباشرة عبر الهاتف أو البريد.',
       namePlaceholder: 'الاسم الكامل أو اسم العيادة/المركز',
       emailPlaceholder: 'البريد الإلكتروني للمتابعة',
       phonePlaceholder: 'رقم الهاتف (واتساب)',
-      rolePlaceholder: 'اختر الصفة (طبيب / مختبر / صيدلية / مركز أشعة / مراجع)',
+      rolePlaceholder: 'اختر الصفة (طبيب / مختبر / صيدلية / مراجع)',
       messagePlaceholder: 'اكتب تفاصيل استفسارك أو رغبتك بالانضمام...',
       submitBtn: 'إرسال الاستفسار',
       submittingBtn: 'جاري الإرسال...',
@@ -160,7 +165,7 @@ export const translations = {
       successMessage: 'شكراً لتواصلك. سيقوم فريق الدعم الفني بمتابعة استفسارك عبر الواتساب أو البريد الإلكتروني خلال وقت وجيز.'
     },
     footer: {
-      brandDesc: 'منصة MEDORA | ميدورا العراق — منظومة طبية رقمية متكاملة لربط الأطباء والمختبرات ومراكز الأشعة والصيدليات والمرضى في بيئة آمنة وفعالة.',
+      brandDesc: 'منصة MEDORA | ميدورا العراق — منظومة طبية رقمية متكاملة لربط الأطباء والمختبرات والصيدليات والمرضى في بيئة آمنة وفعالة.',
       slogan: 'صحتك أولويتنا',
       subSlogan: 'YOUR HEALTH • OUR PRIORITY',
       copyright: 'جميع الحقوق محفوظة. © 2026 منصة MEDORA | ميدورا العراق.',
@@ -199,14 +204,14 @@ export const translations = {
     hero: {
       badge: 'Integrated Digital Health Platform in Iraq',
       headline: 'Unified Medical Care & Diagnostic Gateway',
-      subtitle: 'Bringing together doctors, laboratories, radiology, pharmacies, and patients in one place for better healthcare.',
+      subtitle: 'Bringing together doctors, laboratories, pharmacies, and patients in one place for better healthcare.',
       secondarySubtitle: 'Unified digital healthcare ecosystem across Iraq.',
       getStartedBtn: 'Get Started',
       learnMoreBtn: 'Explore Portals',
       slogan: 'YOUR HEALTH • OUR PRIORITY',
       stats: {
-        portalsCount: '8 Dedicated Portals',
-        portalsDesc: 'Covering every clinical necessity',
+        portalsCount: '6 Active Portals',
+        portalsDesc: 'Covering core clinical care & diagnostics',
         iraqCoverage: 'National Reach',
         iraqCoverageDesc: 'Baghdad and all Iraqi governorates',
         precision: 'Precision & Reliability',
@@ -215,7 +220,7 @@ export const translations = {
     },
     portalsSection: {
       kicker: 'Independent Operating Gateways',
-      title: 'The Eight Medical Portals',
+      title: 'Active Medical Portals',
       description: 'Each portal is built as an independent operational workstation addressing the exact workflows of healthcare partners while keeping clinical data synchronized.',
       openPortal: 'Access Portal',
       shellNotice: 'Unified Healthcare Gateway Network',
@@ -239,12 +244,12 @@ export const translations = {
       kicker: 'Our National Vision',
       title: 'About Us — Unified Medical Platform',
       lead: 'A pioneering Iraqi digital healthcare platform bridging doctors, clinics, diagnostics, pharmacies, and patients with dignity and reliability.',
-      p1: 'The platform was born out of an urgent need to bridge the fragmentation across Iraq’s healthcare ecosystem, connecting clinics, pathology labs, imaging centers, and pharmacies into a synchronized continuum.',
+      p1: 'The platform was born out of an urgent need to bridge the fragmentation across Iraq’s healthcare ecosystem, connecting clinics, pathology labs, pharmacies, and patients into a synchronized continuum.',
       p2: 'Our goal is to streamline medical communication and eliminate friction, linking specialized centers across Baghdad, Basra, Mosul, Erbil, Najaf, and all provinces into a cohesive digital network.',
       values: [
         {
           title: 'Direct Connectivity',
-          desc: 'Eliminating the gap between doctors, labs, radiology, and pharmacies for instant clinical data flow.'
+          desc: 'Eliminating the gap between doctors, labs, and pharmacies for instant clinical data flow.'
         },
         {
           title: 'Extreme Reliability',
@@ -259,24 +264,24 @@ export const translations = {
     services: {
       kicker: 'Comprehensive Healthcare Synergy',
       title: 'Unified Ecosystem Services',
-      subtitle: 'Eight interconnected operational pillars orchestrating clinical care, diagnostics, wholesale supply, and central governance.',
+      subtitle: 'Six active operational pillars orchestrating clinical care, diagnostics, retail pharmacy, and central governance.',
       items: [
         {
           id: 'patients',
           title: '1. Patients & Care Companion',
-          desc: 'Verified doctor appointments, family health history, instant lab and imaging results, and medication reminders.',
+          desc: 'Verified doctor appointments, family health history, instant diagnostic laboratory results, and medication reminders.',
           portalId: 'patient' as const,
         },
         {
           id: 'doctors',
           title: '2. Doctors & Specialty Clinics',
-          desc: 'Digital clinic operations, certified e-prescriptions, and seamless lab and ultrasound imaging referral network.',
+          desc: 'Digital clinic operations, certified e-prescriptions, and seamless diagnostic laboratory referral network.',
           portalId: 'doctor' as const,
         },
         {
           id: 'pharmacy',
           title: '3. Community Pharmacies',
-          desc: 'Certified e-prescription dispensing with anti-duplicate validation, live stock locator, and direct wholesale procurement.',
+          desc: 'Certified e-prescription dispensing with anti-duplicate validation, live stock locator, and dispensing analytics.',
           portalId: 'pharmacy' as const,
         },
         {
@@ -312,26 +317,29 @@ export const translations = {
       ]
     },
     contact: {
-      kicker: 'Official Support Channels',
+      kicker: 'Official Support Center',
       title: 'Technical Support & Center Inquiries',
-      subtitle: 'We are eager to assist doctors, medical centers, and patients through our official communication channels.',
-      whatsappTitle: 'Contact Us via WhatsApp',
-      whatsappNumber: '07885663748',
-      whatsappAction: 'Open WhatsApp Chat',
-      instagramTitle: 'Official Instagram',
-      instagramHandle: '@medoraq',
-      instagramUrl: 'https://www.instagram.com/medoraq/',
-      instagramAction: 'Follow @medoraq on Instagram',
-      emailTitle: 'Support Email',
-      emailAddress: 'support@medora-iq.com',
-      emailAction: 'Send Email Message',
-      supportBadge: 'Technical Support: We are always here to help',
+      subtitle: 'We are ready to assist doctors, medical centers, and patients through MEDORA Iraq’s official communication channels.',
+      whatsappTitle: OFFICIAL_SUPPORT_CONFIG.generalSupport.titleEn,
+      whatsappNumber: OFFICIAL_SUPPORT_CONFIG.generalSupport.displayPhone,
+      whatsappAction: OFFICIAL_SUPPORT_CONFIG.generalSupport.whatsappCtaEn,
+      womensWhatsappTitle: OFFICIAL_SUPPORT_CONFIG.womensSupport.titleEn,
+      womensWhatsappNumber: OFFICIAL_SUPPORT_CONFIG.womensSupport.displayPhone,
+      womensWhatsappAction: OFFICIAL_SUPPORT_CONFIG.womensSupport.whatsappCtaEn,
+      instagramTitle: OFFICIAL_SUPPORT_CONFIG.instagram.titleEn,
+      instagramHandle: OFFICIAL_SUPPORT_CONFIG.instagram.handle,
+      instagramUrl: OFFICIAL_SUPPORT_CONFIG.instagram.url,
+      instagramAction: OFFICIAL_SUPPORT_CONFIG.instagram.ctaEn,
+      emailTitle: OFFICIAL_SUPPORT_CONFIG.email.titleEn,
+      emailAddress: OFFICIAL_SUPPORT_CONFIG.email.address,
+      emailAction: OFFICIAL_SUPPORT_CONFIG.email.ctaEn,
+      supportBadge: 'MEDORA Official Support Center — Always Here to Help',
       formTitle: 'Direct Inquiry or Facility Onboarding',
       formDesc: 'Submit your query and our support team will follow up directly via WhatsApp or email.',
       namePlaceholder: 'Full Name or Clinic/Center Name',
       emailPlaceholder: 'Email Address for Correspondence',
       phonePlaceholder: 'Phone Number (WhatsApp)',
-      rolePlaceholder: 'Role (Doctor / Lab / Pharmacy / Radiology / Patient)',
+      rolePlaceholder: 'Role (Doctor / Lab / Pharmacy / Patient)',
       messagePlaceholder: 'Provide details about your inquiry or onboarding interest...',
       submitBtn: 'Send Inquiry',
       submittingBtn: 'Sending...',
@@ -339,7 +347,7 @@ export const translations = {
       successMessage: 'Thank you for reaching out. Our support team will review your message and reply via WhatsApp or email shortly.'
     },
     footer: {
-      brandDesc: 'MEDORA | Unified Iraqi Healthcare Platform — Connecting clinicians, laboratories, radiology centers, pharmacies, and patients into a secure, coordinated ecosystem.',
+      brandDesc: 'MEDORA | Unified Iraqi Healthcare Platform — Connecting clinicians, laboratories, pharmacies, and patients into a secure, coordinated ecosystem.',
       slogan: 'YOUR HEALTH • OUR PRIORITY',
       subSlogan: 'صحتك أولويتنا',
       copyright: 'All rights reserved. © 2026 MEDORA Platform.',

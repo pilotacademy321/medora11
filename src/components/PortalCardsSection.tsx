@@ -1,6 +1,6 @@
 import React from 'react';
 import { useLanguage } from '../context/LanguageContext';
-import { PORTALS_DATA } from '../data/portalsData';
+import { ACTIVE_PORTALS_DATA } from '../data/portalsData';
 import { PortalId, PortalInfo } from '../types';
 import { 
   Stethoscope, 
@@ -62,8 +62,8 @@ export const PortalCardsSection: React.FC<PortalCardsSectionProps> = ({
           </div>
 
           {/* Quick-Access Row (Scrollable on small mobile, flex grid on desktop) */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3 sm:gap-4">
-            {PORTALS_DATA.map((portal) => (
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4">
+            {ACTIVE_PORTALS_DATA.map((portal) => (
               <button
                 key={portal.id}
                 onClick={() => onSelectPortal(portal.id)}
@@ -105,9 +105,9 @@ export const PortalCardsSection: React.FC<PortalCardsSectionProps> = ({
           </p>
         </div>
 
-        {/* 7 Distinct Portal Cards Grid */}
+        {/* Active Portal Cards Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 sm:gap-8">
-          {PORTALS_DATA.map((portal) => (
+          {ACTIVE_PORTALS_DATA.map((portal) => (
             <div
               key={portal.id}
               className={`bg-white rounded-2xl p-6 shadow-sm hover:shadow-xl border ${portal.borderColor} transition-all duration-300 flex flex-col justify-between group relative overflow-hidden`}

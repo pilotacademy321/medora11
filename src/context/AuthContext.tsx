@@ -103,13 +103,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [showDomainHelp, setShowDomainHelp] = useState(false);
   const isDemoMode = false;
   const lastUidRef = useRef<string | null>(null);
+  const profileLoadInFlightRef = useRef<{ uid: string; promise: Promise<void> } | null>(null);
 
   const currentHostname = typeof window !== 'undefined' ? window.location.hostname : '';
   const firebaseProjectId = firebaseConfig.projectId || 'operating-league-dv9wh';
 
-  // Validate connection on boot
+  // Defer connection validation slightly so first paint on Home is never delayed for guests
   useEffect(() => {
-    validateFirestoreConnection();
+    const timer = window.setTimeout(() => {
+      if (auth.currentUser) {
+        validateFirestoreConnection();
+      }
+    }, 1500);
+    return () => window.clearTimeout(timer);
   }, []);
 
   const PROFILE_COLLECTIONS = [
@@ -188,6 +194,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const loadUserProfile = async (firebaseUser: User) => {
+    if (profileLoadInFlightRef.current?.uid === firebaseUser.uid) {
+      return profileLoadInFlightRef.current.promise;
+    }
+
+    const task = (async () => {
     try {
       const isVerifiedSuperAdminEmail = isVerifiedSuperAdmin(firebaseUser);
 
@@ -353,6 +364,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Handled gracefully without crashing app
       setAuthError(err instanceof Error ? err.message : 'Failed to retrieve profile');
     }
+    })().finally(() => {
+      if (profileLoadInFlightRef.current?.uid === firebaseUser.uid) {
+        profileLoadInFlightRef.current = null;
+      }
+    });
+
+    profileLoadInFlightRef.current = { uid: firebaseUser.uid, promise: task };
+    return task;
   };
 
   // Clean up any legacy demo keys on mount

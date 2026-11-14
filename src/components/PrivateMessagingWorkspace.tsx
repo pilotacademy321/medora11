@@ -13,6 +13,7 @@ import { onAuthStateChanged } from 'firebase/auth';
 import { auth, db, handleFirestoreError, OperationType, sanitizeForFirestore } from '../lib/firebase';
 import { isVerifiedSuperAdmin } from '../utils/adminSecurity';
 import { logAuditEvent } from '../lib/auditLogger';
+import { isRoleSuspended } from '../config/portalsConfig';
 import { useLanguage } from '../context/LanguageContext';
 import {
   Conversation,
@@ -102,7 +103,7 @@ export const PrivateMessagingWorkspace: React.FC<PrivateMessagingWorkspaceProps>
   const { language, isRTL } = useLanguage();
 
   const authorizedCategories = useMemo(
-    () => getAuthorizedCategoriesForRole(currentUserRole),
+    () => getAuthorizedCategoriesForRole(currentUserRole).filter((c) => !isRoleSuspended(c.role)),
     [currentUserRole]
   );
 
@@ -1219,11 +1220,13 @@ export const PrivateMessagingWorkspace: React.FC<PrivateMessagingWorkspaceProps>
 
   // Match conversation against a selected role category
   const doesConversationMatchCategory = (conv: Conversation, categoryRole: UserRole): boolean => {
+    if (isRoleSuspended(categoryRole) && currentUserRole !== 'super_admin') return false;
     if (currentUserRole === 'super_admin') {
       const participants = getConversationParticipantsList(conv);
       return participants.some((p) => p.role === categoryRole);
     }
     const peer = getConversationPeerDisplay(conv, currentUserUid);
+    if (isRoleSuspended(peer.role)) return false;
     return peer.role === categoryRole;
   };
 

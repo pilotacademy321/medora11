@@ -69,8 +69,8 @@ export const AboutUsPage: React.FC<AboutUsPageProps> = ({
 
             <p className="text-sm sm:text-base text-slate-200 leading-relaxed pt-2">
               {language === 'ar'
-                ? 'مشروع رائد يهدف إلى تسهيل التواصل السريري واللوجستي بين المرضى، والأطباء، والمختبرات المرضية، ومراكز الأشعة، والصيدليات، ومذاخر الأدوية لخدمة كل مراجع وكادر صحي بأعلى درجات الدقة والسرعة.'
-                : 'A nationwide initiative uniting patients, doctors, diagnostic laboratories, radiology centers, retail pharmacies, and wholesale warehouses to deliver streamlined, synchronized care.'}
+                ? 'مشروع رائد يهدف إلى تسهيل التواصل السريري واللوجستي بين المرضى، والأطباء، والمختبرات المرضية، والصيدليات لخدمة كل مراجع وكادر صحي بأعلى درجات الدقة والسرعة.'
+                : 'A nationwide initiative uniting patients, doctors, diagnostic laboratories, and retail pharmacies to deliver streamlined, synchronized care.'}
             </p>
 
             <div className="pt-4 flex flex-wrap items-center gap-3">

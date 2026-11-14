@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import http from 'http';
 import path from 'path';
@@ -329,6 +330,19 @@ async function startServer() {
     },
   };
 
+  // Load Firebase API key from environment or firebase-applet-config.json
+  const SOLE_ADMIN_EMAIL = 'bcgmoc@gmail.com';
+  const FIREBASE_CONFIG_FILE = path.resolve(__dirname, 'firebase-applet-config.json');
+  let firebaseApiKey = (process.env.FIREBASE_API_KEY || '').trim();
+  if (!firebaseApiKey) {
+    try {
+      const fbCfg = JSON.parse(fs.readFileSync(FIREBASE_CONFIG_FILE, 'utf-8'));
+      firebaseApiKey = String(fbCfg.apiKey || '');
+    } catch (e) {
+      console.warn('[AdminSecurity] Could not load firebase-applet-config.json:', e);
+    }
+  }
+
   // Helper: verify any authenticated Firebase user via Identity Toolkit
   async function verifyAuthenticatedUserToken(req: express.Request): Promise<
     | { ok: true; uid: string; email: string }
@@ -443,16 +457,6 @@ async function startServer() {
   // SUPER ADMIN OVERSIGHT VERIFICATION & AUDIT ENDPOINTS (/api/admin/*)
   // Enforces server-side verification for bcgmoc@gmail.com via Firebase Identity Toolkit
   // -------------------------------------------------------------
-  const SOLE_ADMIN_EMAIL = 'bcgmoc@gmail.com';
-  const FIREBASE_CONFIG_FILE = path.resolve(__dirname, 'firebase-applet-config.json');
-  let firebaseApiKey = '';
-  try {
-    const fbCfg = JSON.parse(fs.readFileSync(FIREBASE_CONFIG_FILE, 'utf-8'));
-    firebaseApiKey = String(fbCfg.apiKey || '');
-  } catch (e) {
-    console.warn('[AdminSecurity] Could not load firebase-applet-config.json:', e);
-  }
-
   const oversightAuditBuffer: Array<{
     auditId: string;
     actorEmail: string;
@@ -679,19 +683,104 @@ async function startServer() {
   });
 
   // -------------------------------------------------------------
+  // OFFICIAL SUPPORT CENTER API (/api/support/*)
+  // -------------------------------------------------------------
+  const supportTicketsBuffer: Array<{
+    id: string;
+    referenceCode: string;
+    senderName: string;
+    senderEmail: string;
+    senderPhone?: string;
+    portalId: string;
+    role: string;
+    channelPreference: string;
+    subject: string;
+    message: string;
+    status: 'open' | 'in_progress' | 'resolved';
+    createdAt: string;
+  }> = [];
+
+  app.post('/api/support/tickets', (req, res) => {
+    try {
+      const {
+        senderName,
+        senderEmail,
+        senderPhone = '',
+        portalId = 'public',
+        role = 'visitor',
+        channelPreference = 'platform',
+        subject,
+        message,
+      } = req.body || {};
+
+      const cleanName = String(senderName || '').trim();
+      const cleanEmail = String(senderEmail || '').trim();
+      const cleanPhone = String(senderPhone || '').trim();
+      const cleanSubject = String(subject || '').trim() || 'استفسار دعم رسمي — MEDORA';
+      const cleanMessage = String(message || '').trim();
+
+      if (cleanName.length < 2) {
+        return res.status(400).json({ ok: false, error: 'يرجى إدخال الاسم الكامل (حرفان على الأقل).' });
+      }
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+        return res.status(400).json({ ok: false, error: 'يرجى إدخال بريد إلكتروني صحيح للمتابعة.' });
+      }
+      if (cleanMessage.length < 5) {
+        return res.status(400).json({ ok: false, error: 'يرجى كتابة تفاصيل الاستفسار (5 أحرف على الأقل).' });
+      }
+
+      const now = new Date().toISOString();
+      const randomSuffix = Math.random().toString(36).slice(2, 6).toUpperCase();
+      const referenceCode = `MED-SUP-${Date.now().toString().slice(-6)}-${randomSuffix}`;
+      const id = `ticket_${Date.now()}_${randomSuffix.toLowerCase()}`;
+
+      const ticket = {
+        id,
+        referenceCode,
+        senderName: cleanName.slice(0, 128),
+        senderEmail: cleanEmail.slice(0, 128),
+        senderPhone: cleanPhone.slice(0, 32),
+        portalId: String(portalId || 'public').slice(0, 64),
+        role: String(role || 'visitor').slice(0, 64),
+        channelPreference: String(channelPreference || 'platform').slice(0, 32),
+        subject: cleanSubject.slice(0, 160),
+        message: cleanMessage.slice(0, 4000),
+        status: 'open' as const,
+        createdAt: now,
+      };
+
+      supportTicketsBuffer.unshift(ticket);
+      if (supportTicketsBuffer.length > 250) supportTicketsBuffer.length = 250;
+
+      console.log(`[SupportCenter] Ticket received ${ticket.referenceCode} from ${ticket.senderEmail} (portal=${ticket.portalId})`);
+      return res.status(201).json({
+        ok: true,
+        ticket,
+        officialEmail: 'bcgmoc@gmail.com',
+      });
+    } catch (err: any) {
+      console.error('[SupportCenter] Ticket submission failed:', err);
+      return res.status(500).json({ ok: false, error: err?.message || 'Internal support ticket error' });
+    }
+  });
+
+  // -------------------------------------------------------------
   // VITE DEV MIDDLEWARE OR PRODUCTION STATIC SERVING
   // -------------------------------------------------------------
   const httpServer = http.createServer(app);
+  let viteServer: Awaited<ReturnType<typeof createViteServer>> | null = null;
 
   if (!isProd) {
-    const vite = await createViteServer({
+    const hmrDisabled = process.env.DISABLE_HMR === 'true';
+    viteServer = await createViteServer({
       server: {
         middlewareMode: true,
-        hmr: process.env.DISABLE_HMR === 'true' ? false : true,
+        hmr: hmrDisabled ? false : { server: httpServer },
+        watch: hmrDisabled ? null : undefined,
       },
       appType: 'spa',
     });
-    app.use(vite.middlewares);
+    app.use(viteServer.middlewares);
     console.log('[Server] Vite middleware mounted in development mode.');
   } else {
     const distPath = path.resolve(__dirname, 'dist');
@@ -705,6 +794,7 @@ async function startServer() {
   httpServer.on('error', (err: any) => {
     if (err.code === 'EADDRINUSE') {
       console.error(`[Server] Port ${PORT} already in use.`);
+      process.exit(1);
     } else {
       console.error('[Server] HTTP server encountered an error:', err);
     }
@@ -713,6 +803,18 @@ async function startServer() {
   httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`[Server] MEDORA Full-Stack Server running at http://0.0.0.0:${PORT}`);
   });
+
+  const shutdown = async () => {
+    try {
+      if (viteServer) await viteServer.close();
+      httpServer.close(() => process.exit(0));
+      setTimeout(() => process.exit(0), 2000).unref();
+    } catch {
+      process.exit(0);
+    }
+  };
+  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', shutdown);
 }
 
 startServer().catch((err) => {

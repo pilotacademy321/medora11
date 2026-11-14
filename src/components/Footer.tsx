@@ -2,6 +2,7 @@ import React from 'react';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
 import { getVisibleSupportContacts } from '../utils/supportRouting';
+import { OFFICIAL_SUPPORT_CONFIG } from '../config/officialSupportConfig';
 import { Logo } from './Logo';
 import { MessageSquare, Mail, Phone, ExternalLink, Instagram, ShieldCheck } from 'lucide-react';
 
@@ -105,7 +106,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenLegal }) => {
             
             <div className="space-y-3 text-xs sm:text-sm">
               <a
-                href="https://www.instagram.com/medoraq/"
+                href={OFFICIAL_SUPPORT_CONFIG.instagram.url}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="flex items-center justify-between p-3 rounded-xl bg-slate-900/80 hover:bg-slate-900 border border-slate-800 hover:border-pink-500/40 transition-all group"
@@ -116,10 +117,12 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenLegal }) => {
                   </div>
                   <div>
                     <div className="text-[11px] text-slate-400">
-                      {language === 'ar' ? 'الحساب الرسمي على إنستغرام' : 'Official Instagram'}
+                      {language === 'ar'
+                        ? OFFICIAL_SUPPORT_CONFIG.instagram.titleAr
+                        : OFFICIAL_SUPPORT_CONFIG.instagram.titleEn}
                     </div>
                     <div className="font-bold text-white font-mono group-hover:text-pink-300 transition-colors">
-                      @medoraq
+                      {OFFICIAL_SUPPORT_CONFIG.instagram.handle}
                     </div>
                   </div>
                 </div>
@@ -132,7 +135,11 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenLegal }) => {
                     <MessageSquare size={16} />
                   </div>
                   <div>
-                    <div className="text-[11px] text-slate-400">{t.contact.whatsappTitle}</div>
+                    <div className="text-[11px] text-slate-400">
+                      {language === 'ar'
+                        ? OFFICIAL_SUPPORT_CONFIG.generalSupport.titleAr
+                        : OFFICIAL_SUPPORT_CONFIG.generalSupport.titleEn}
+                    </div>
                     <div className="font-bold text-white font-mono" dir="ltr">{contacts.generalContact.displayPhone}</div>
                   </div>
                 </div>
@@ -141,14 +148,14 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenLegal }) => {
                     href={whatsappHref}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex-1 inline-flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 text-[11px] font-bold transition-colors"
+                    className="flex-1 inline-flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 text-[11px] font-bold transition-colors"
                   >
                     <MessageSquare size={12} />
                     <span>{language === 'ar' ? 'واتساب' : 'WhatsApp'}</span>
                   </a>
                   <a
                     href={callHref}
-                    className="flex-1 inline-flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-[11px] font-bold transition-colors"
+                    className="flex-1 inline-flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-[11px] font-bold transition-colors"
                   >
                     <Phone size={12} />
                     <span>{language === 'ar' ? 'اتصال' : 'Call'}</span>
@@ -156,7 +163,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenLegal }) => {
                 </div>
               </div>
 
-              {contacts.showFemaleSupport && contacts.femaleContact && (
+              {contacts.femaleContact && (
                 <div className="p-3 rounded-xl bg-rose-950/40 border border-rose-800/50 space-y-2">
                   <div className="flex items-center gap-3">
                     <div className="w-8 h-8 rounded-lg bg-rose-500/20 text-rose-300 flex items-center justify-center shrink-0">
@@ -164,7 +171,9 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenLegal }) => {
                     </div>
                     <div>
                       <div className="text-[11px] text-rose-200/80">
-                        {language === 'ar' ? 'الدعم النسائي الخاص للمريضات' : 'Female Patient Support'}
+                        {language === 'ar'
+                          ? OFFICIAL_SUPPORT_CONFIG.womensSupport.titleAr
+                          : OFFICIAL_SUPPORT_CONFIG.womensSupport.titleEn}
                       </div>
                       <div className="font-bold text-white font-mono" dir="ltr">{contacts.femaleContact.displayPhone}</div>
                     </div>
@@ -174,14 +183,14 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenLegal }) => {
                       href={contacts.femaleContact.whatsappHref}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="flex-1 inline-flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-lg bg-rose-600/25 hover:bg-rose-600/40 text-rose-200 border border-rose-500/30 text-[11px] font-bold transition-colors"
+                      className="flex-1 inline-flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-lg bg-rose-600/25 hover:bg-rose-600/40 text-rose-200 border border-rose-500/30 text-[11px] font-bold transition-colors"
                     >
                       <MessageSquare size={12} />
                       <span>{language === 'ar' ? 'واتساب' : 'WhatsApp'}</span>
                     </a>
                     <a
                       href={contacts.femaleContact.callHref}
-                      className="flex-1 inline-flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-[11px] font-bold transition-colors"
+                      className="flex-1 inline-flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-[11px] font-bold transition-colors"
                     >
                       <Phone size={12} />
                       <span>{language === 'ar' ? 'اتصال' : 'Call'}</span>
@@ -198,7 +207,11 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenLegal }) => {
                   <Mail size={16} />
                 </div>
                 <div>
-                  <div className="text-[11px] text-slate-400">{t.contact.emailTitle}</div>
+                  <div className="text-[11px] text-slate-400">
+                    {language === 'ar'
+                      ? OFFICIAL_SUPPORT_CONFIG.email.titleAr
+                      : OFFICIAL_SUPPORT_CONFIG.email.titleEn}
+                  </div>
                   <div className="font-semibold text-white font-mono break-all">{contacts.email}</div>
                 </div>
               </a>

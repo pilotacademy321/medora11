@@ -67,7 +67,16 @@ export type AuditActionType =
   | 'payment_rejected'
   | 'payment_internal_note_added'
   | 'payment_settings_updated'
-  | 'subscription_activated';
+  | 'subscription_activated'
+  | 'accreditation_approved'
+  | 'accreditation_rejected'
+  | 'accreditation_completion_requested'
+  | 'accreditation_suspended'
+  | 'subscription_created'
+  | 'subscription_renewed'
+  | 'subscription_price_updated'
+  | 'subscription_status_updated'
+  | 'subscription_plan_saved';
 
 export interface SystemAuditLogEntry {
   id: string;

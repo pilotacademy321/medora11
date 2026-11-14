@@ -1,6 +1,7 @@
 import React from 'react';
 import { useLanguage } from '../context/LanguageContext';
 import { PortalId } from '../types';
+import { isPortalActive } from '../config/portalsConfig';
 import { 
   Stethoscope, 
   FlaskConical, 
@@ -100,9 +101,11 @@ export const ServicesSection: React.FC<ServicesSectionProps> = ({
           </p>
         </div>
 
-        {/* 5 Core Services Grid */}
+        {/* Active Services Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 sm:gap-8">
-          {t.services.items.map((item, index) => {
+          {t.services.items
+            .filter((item) => isPortalActive(item.portalId))
+            .map((item, index) => {
             const config = servicesConfig.find((c) => c.portalId === item.portalId) || servicesConfig[0];
             const IconComponent = config.icon;
 

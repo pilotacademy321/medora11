@@ -27,10 +27,13 @@ import {
   buildWhatsAppSupportHref,
   detectSensitiveSupportInput,
   OFFICIAL_SUPPORT_EMAIL,
+  OFFICIAL_INSTAGRAM_URL,
+  OFFICIAL_INSTAGRAM_HANDLE,
   buildPhoneCallHref,
   canViewFemaleSupport,
   getVisibleSupportContacts,
 } from './supportRouting';
+import { OFFICIAL_SUPPORT_CONFIG } from '../config/officialSupportConfig';
 
 let totalTests = 0;
 let passedTests = 0;
@@ -55,9 +58,9 @@ function runTests() {
   assert(MAIN_SUPPORT_URL === 'https://wa.me/9647885663748', 'Main support URL matches https://wa.me/9647885663748');
   assert(PATIENT_WOMEN_SUPPORT_NUMBER === '9647752564326', 'Patient & Women support number is 9647752564326');
   assert(PATIENT_WOMEN_SUPPORT_URL === 'https://wa.me/9647752564326', 'Patient & Women URL matches https://wa.me/9647752564326');
-  assert(MAIN_SUPPORT_TITLE_AR === 'الدعم الرئيسي والاشتراكات', 'Main support Arabic title matches');
+  assert(MAIN_SUPPORT_TITLE_AR === 'الدعم العام (الرجال)', 'Main support Arabic title matches');
   assert(MAIN_SUPPORT_BUTTON_AR === 'تواصل مع الدعم الرئيسي', 'Main support Arabic button matches');
-  assert(PATIENT_WOMEN_SUPPORT_TITLE_AR === 'دعم المرضى والمساعدة النسائية', 'Patient & Women support Arabic title matches');
+  assert(PATIENT_WOMEN_SUPPORT_TITLE_AR === 'الدعم النسائي', 'Women support Arabic title matches');
   assert(WOMENS_SUPPORT_BUTTON_AR === 'تواصلي مع الدعم النسائي', 'Women support Arabic button matches');
 
   // 2. Smart Support Routing rules
@@ -202,11 +205,13 @@ function runTests() {
     'Detects medical record keywords so user is guided to authorized Record Sharing'
   );
 
-  // 7. Strict Female Support Privacy Gate & Official Contacts Matrix
+  // 7. Sole Official MEDORA IRAQ Contact Matrix Across All Portals
   assert(
-    OFFICIAL_SUPPORT_EMAIL === 'support@medora-iq.com' &&
-      String(OFFICIAL_SUPPORT_EMAIL) !== 'bcgmoc@gmail.com',
-    'Official public support email is support@medora-iq.com (not bcgmoc@gmail.com)'
+    OFFICIAL_SUPPORT_EMAIL === 'bcgmoc@gmail.com' &&
+      OFFICIAL_SUPPORT_CONFIG.email.mailtoHref === 'mailto:bcgmoc@gmail.com' &&
+      OFFICIAL_INSTAGRAM_HANDLE === '@medoraq' &&
+      OFFICIAL_INSTAGRAM_URL === 'https://www.instagram.com/medoraq/',
+    'Official centralized email is bcgmoc@gmail.com and Instagram is @medoraq (https://www.instagram.com/medoraq/)'
   );
   assert(
     buildPhoneCallHref('07885663748') === 'tel:+9647885663748' &&
@@ -214,65 +219,39 @@ function runTests() {
     'Phone call tel: href builders format Iraqi numbers accurately'
   );
 
-  // ONLY authenticated female patient is permitted
-  assert(
-    canViewFemaleSupport({ isAuthenticated: true, userRole: 'patient', gender: 'female', isAdmin: false }) === true,
-    'Female support IS visible to authenticated female patient'
-  );
-
-  // Exhaustive deny cases
-  assert(
-    canViewFemaleSupport({ isAuthenticated: false, userRole: 'patient', gender: 'female', isAdmin: false }) === false,
-    'Female support is HIDDEN for unauthenticated visitors'
-  );
-  assert(
-    canViewFemaleSupport(null) === false,
-    'Female support is HIDDEN when auth context is null'
-  );
-  assert(
-    canViewFemaleSupport({ isAuthenticated: true, userRole: 'patient', gender: 'male', isAdmin: false }) === false,
-    'Female support is HIDDEN for male patient'
-  );
-  assert(
-    canViewFemaleSupport({ isAuthenticated: true, userRole: 'patient', gender: undefined, isAdmin: false }) === false,
-    'Female support is HIDDEN for patient without explicit female gender'
-  );
+  // Both General Support (Men) and Women's Support are clearly displayed across ALL portals
   for (const role of [
+    'patient',
     'doctor',
     'laboratory',
-    'radiology_center',
     'pharmacy',
-    'wholesaler',
     'secretary',
     'super_admin',
   ] as const) {
     assert(
-      canViewFemaleSupport({ isAuthenticated: true, userRole: role, gender: 'female', isAdmin: role === 'super_admin' }) === false,
-      `Female support is HIDDEN for ${role} role even if gender=female`
+      canViewFemaleSupport({ isAuthenticated: true, userRole: role, isAdmin: role === 'super_admin' }) === true,
+      `Separated Women's Support channel is visible in ${role} portal`
     );
   }
+  assert(
+    canViewFemaleSupport({ isAuthenticated: false }) === true &&
+      canViewFemaleSupport(null) === true,
+    'Public visitors also see both General Support (Men) and Women Support channels clearly'
+  );
 
   const publicContacts = getVisibleSupportContacts({ isAuthenticated: false });
   assert(
-    publicContacts.showFemaleSupport === false &&
-      publicContacts.femaleContact === null &&
+    publicContacts.showFemaleSupport === true &&
       publicContacts.generalContact.displayPhone === '07885663748' &&
+      publicContacts.generalContact.whatsappHref.startsWith('https://wa.me/9647885663748') &&
       publicContacts.generalContact.callHref === 'tel:+9647885663748' &&
-      publicContacts.email === 'support@medora-iq.com',
-    'Public unauthenticated contacts expose general support & public email only without 07752564326'
-  );
-
-  const femalePatientContacts = getVisibleSupportContacts({
-    isAuthenticated: true,
-    userRole: 'patient',
-    gender: 'female',
-    isAdmin: false,
-  });
-  assert(
-    femalePatientContacts.showFemaleSupport === true &&
-      femalePatientContacts.femaleContact?.displayPhone === '07752564326' &&
-      femalePatientContacts.femaleContact?.callHref === 'tel:+9647752564326',
-    'Female patient contacts expose dedicated 07752564326 WhatsApp and Call channels'
+      publicContacts.femaleContact?.displayPhone === '07752564326' &&
+      publicContacts.femaleContact?.whatsappHref.startsWith('https://wa.me/9647752564326') &&
+      publicContacts.femaleContact?.callHref === 'tel:+9647752564326' &&
+      publicContacts.email === 'bcgmoc@gmail.com' &&
+      publicContacts.emailHref === 'mailto:bcgmoc@gmail.com' &&
+      publicContacts.instagramUrl === 'https://www.instagram.com/medoraq/',
+    'Centralized contact helper exposes BOTH separated WhatsApp lines (+9647885663748 & +9647752564326), bcgmoc@gmail.com, and @medoraq'
   );
 
   console.log(`\nSummary: ${passedTests}/${totalTests} passed, ${failedTests} failed.`);

@@ -11,6 +11,7 @@ import {
   limit,
   getDocs
 } from 'firebase/firestore';
+import { cachedFetch } from './firestoreCache';
 
 export interface PlatformMetrics {
   appointmentsToday: number;
@@ -153,19 +154,24 @@ export async function recordRealMetricEvent(
  * Returns an EMPTY array if no real activities have occurred yet.
  */
 export async function fetchRealDatabaseActivities(): Promise<RealActivityItem[]> {
-  const activities: RealActivityItem[] = [];
-
   // Only query when user is authenticated to adhere to security rules
-  if (!auth.currentUser) {
+  const currentUid = auth.currentUser?.uid;
+  if (!currentUid) {
     return [];
   }
 
-  try {
-    // 1. Real appointments
+  return cachedFetch<RealActivityItem[]>(`platform_activities_${currentUid}`, 45_000, async () => {
+    const activities: RealActivityItem[] = [];
+
     try {
-      const apptQuery = query(collection(db, 'appointments'), limit(4));
-      const apptSnap = await getDocs(apptQuery);
-      apptSnap.forEach((d) => {
+      const [apptSnap, rxSnap, orderSnap, labSnap] = await Promise.all([
+        getDocs(query(collection(db, 'appointments'), limit(4))).catch(() => null),
+        getDocs(query(collection(db, 'electronic_prescriptions'), limit(4))).catch(() => null),
+        getDocs(query(collection(db, 'pharmacy_orders'), limit(4))).catch(() => null),
+        getDocs(query(collection(db, 'lab_results'), limit(4))).catch(() => null),
+      ]);
+
+      apptSnap?.forEach((d) => {
         const item = d.data();
         activities.push({
           id: `appt_${d.id}`,
@@ -175,13 +181,8 @@ export async function fetchRealDatabaseActivities(): Promise<RealActivityItem[]>
           timestamp: item.createdAt || new Date().toISOString(),
         });
       });
-    } catch {}
 
-    // 2. Real prescriptions
-    try {
-      const rxQuery = query(collection(db, 'electronic_prescriptions'), limit(4));
-      const rxSnap = await getDocs(rxQuery);
-      rxSnap.forEach((d) => {
+      rxSnap?.forEach((d) => {
         const item = d.data();
         activities.push({
           id: `rx_${d.id}`,
@@ -191,13 +192,8 @@ export async function fetchRealDatabaseActivities(): Promise<RealActivityItem[]>
           timestamp: item.createdAt || new Date().toISOString(),
         });
       });
-    } catch {}
 
-    // 3. Real pharmacy orders
-    try {
-      const orderQuery = query(collection(db, 'pharmacy_orders'), limit(4));
-      const orderSnap = await getDocs(orderQuery);
-      orderSnap.forEach((d) => {
+      orderSnap?.forEach((d) => {
         const item = d.data();
         activities.push({
           id: `ord_${d.id}`,
@@ -207,13 +203,8 @@ export async function fetchRealDatabaseActivities(): Promise<RealActivityItem[]>
           timestamp: item.createdAt || new Date().toISOString(),
         });
       });
-    } catch {}
 
-    // 4. Real lab reports
-    try {
-      const labQuery = query(collection(db, 'lab_results'), limit(4));
-      const labSnap = await getDocs(labQuery);
-      labSnap.forEach((d) => {
+      labSnap?.forEach((d) => {
         const item = d.data();
         activities.push({
           id: `lab_${d.id}`,
@@ -223,14 +214,14 @@ export async function fetchRealDatabaseActivities(): Promise<RealActivityItem[]>
           timestamp: item.createdAt || new Date().toISOString(),
         });
       });
-    } catch {}
 
-    // Sort descending by real timestamp
-    activities.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      // Sort descending by real timestamp
+      activities.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
-    return activities.slice(0, 5);
-  } catch (err) {
-    console.warn('Real activities query skipped:', err);
-    return [];
-  }
+      return activities.slice(0, 5);
+    } catch (err) {
+      console.warn('Real activities query skipped:', err);
+      return [];
+    }
+  });
 }

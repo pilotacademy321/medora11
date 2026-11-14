@@ -1,4 +1,5 @@
 import { PortalInfo } from '../types';
+import { isPortalActive, isPortalSuspended } from '../config/portalsConfig';
 
 export const PORTALS_DATA: PortalInfo[] = [
   {
@@ -36,8 +37,12 @@ export const PORTALS_DATA: PortalInfo[] = [
     titleEn: 'Pharmacy Portal',
     subtitleAr: 'صرف الوصفات، الأسعار وتوفر المخزون',
     subtitleEn: 'Prescriptions, medication stock & live availability',
-    descAr: 'صرف الوصفات الطبية الإلكترونية المعتمدة، متابعة توفر الأدوية في الصيدليات الأهلية، وإدارة طلبيات التوريد من المذاخر العلمية.',
-    descEn: 'Streamlined dispensing of electronic prescriptions, live inventory tracking across Iraqi pharmacies, and supply replenishment from drug wholesalers.',
+    descAr: isPortalSuspended('wholesaler')
+      ? 'صرف الوصفات الطبية الإلكترونية المعتمدة، متابعة توفر الأدوية في الصيدليات الأهلية، وإدارة المخزون الدوائي وفحص التفاعلات الدوائية.'
+      : 'صرف الوصفات الطبية الإلكترونية المعتمدة، متابعة توفر الأدوية في الصيدليات الأهلية، وإدارة طلبيات التوريد من المذاخر العلمية.',
+    descEn: isPortalSuspended('wholesaler')
+      ? 'Streamlined dispensing of electronic prescriptions, live inventory tracking across Iraqi pharmacies, and automated drug safety verification.'
+      : 'Streamlined dispensing of electronic prescriptions, live inventory tracking across Iraqi pharmacies, and supply replenishment from drug wholesalers.',
     accentColor: '#059669', // Emerald Green
     bgLight: 'bg-emerald-50 text-emerald-600',
     borderColor: 'border-emerald-200 hover:border-emerald-400',
@@ -73,13 +78,17 @@ export const PORTALS_DATA: PortalInfo[] = [
       'جدول المواعيد والاستشارات الفورية',
       'إدارة السجل الطبي الرقمي الموحد للمريض',
       'الوصفة الطبية الإلكترونية المشفرة',
-      'شبكة الإحالة إلى المختبرات ومراكز الأشعة'
+      isPortalSuspended('radiology')
+        ? 'شبكة الإحالة الرقمية إلى المختبرات المعتمدة'
+        : 'شبكة الإحالة إلى المختبرات ومراكز الأشعة'
     ],
     plannedModulesEn: [
       'Appointment & Clinical Consultation Calendar',
       'Unified Digital Patient Health Records',
       'Secure Electronic Prescription Dispatch',
-      'Diagnostic Lab & Radiology Referral Network'
+      isPortalSuspended('radiology')
+        ? 'Certified Diagnostic Laboratory Referral Network'
+        : 'Diagnostic Lab & Radiology Referral Network'
     ]
   },
   {
@@ -90,22 +99,30 @@ export const PORTALS_DATA: PortalInfo[] = [
     titleEn: 'Patient Portal',
     subtitleAr: 'حجز المواعيد، السجل الصحي ومتابعة العلاج',
     subtitleEn: 'Appointments, personal health history & treatment tracking',
-    descAr: 'الملف الصحي الرقمي الموحد للمواطن، حجز مواعيد الأطباء والمراكز، استعراض نتائج التحاليل وتقارير الأشعة، والبحث عن الأدوية المتوفرة.',
-    descEn: 'Unified personal health companion: book certified doctor consultations, view diagnostic lab results, ultrasound scans, and track treatments.',
+    descAr: isPortalSuspended('radiology')
+      ? 'الملف الصحي الرقمي الموحد للمواطن، حجز مواعيد الأطباء والمختبرات، استعراض نتائج التحاليل الطبية، والبحث عن الأدوية المتوفرة.'
+      : 'الملف الصحي الرقمي الموحد للمواطن، حجز مواعيد الأطباء والمراكز، استعراض نتائج التحاليل وتقارير الأشعة، والبحث عن الأدوية المتوفرة.',
+    descEn: isPortalSuspended('radiology')
+      ? 'Unified personal health companion: book certified doctor consultations, view diagnostic lab results, and track treatments.'
+      : 'Unified personal health companion: book certified doctor consultations, view diagnostic lab results, ultrasound scans, and track treatments.',
     accentColor: '#0284c7', // Sky / Medical Blue
     bgLight: 'bg-sky-50 text-sky-600',
     borderColor: 'border-sky-200 hover:border-sky-400',
     iconName: 'patient',
     plannedModulesAr: [
       'سجل المريض الطبي الإلكتروني وتاريخ الزيارات',
-      'حجز وتأكيد المواعيد لدى الأطباء والمراكز',
-      'استعراض نتائج المختبر وصور الأشعة والسونار',
+      'حجز وتأكيد المواعيد لدى الأطباء والمختبرات',
+      isPortalSuspended('radiology')
+        ? 'استعراض نتائج التحاليل والتقارير المخبرية'
+        : 'استعراض نتائج المختبر وصور الأشعة والسونار',
       'محرك البحث عن الصيدليات وتوفر الأدوية'
     ],
     plannedModulesEn: [
       'Personal Electronic Health Records & History',
       'Real-Time Appointment Scheduling & Reminders',
-      'Direct Access to Lab Results & Ultrasound Scans',
+      isPortalSuspended('radiology')
+        ? 'Direct Access to Verified Laboratory Results'
+        : 'Direct Access to Lab Results & Ultrasound Scans',
       'Local Pharmacy Finder & Medication Locator'
     ]
   },
@@ -218,3 +235,5 @@ export const PORTALS_DATA: PortalInfo[] = [
     ]
   }
 ];
+
+export const ACTIVE_PORTALS_DATA: PortalInfo[] = PORTALS_DATA.filter((portal) => isPortalActive(portal.id));

@@ -1478,6 +1478,31 @@
         "createdAt": { "type": "string" }
       },
       "required": ["id", "paymentRequestId", "userId", "planId", "paymentMethod", "amountIqd", "currency", "approvedByUid", "approvedAt", "createdAt"]
+    },
+    "SupportTicket": {
+      "title": "SupportTicket",
+      "description": "In-platform official support inquiry submitted by a user or portal operator",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "referenceCode": { "type": "string", "maxLength": 64 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "senderName": { "type": "string", "maxLength": 128 },
+        "senderEmail": { "type": "string", "maxLength": 128 },
+        "senderPhone": { "type": "string", "maxLength": 32 },
+        "portalId": { "type": "string", "maxLength": 64 },
+        "role": { "type": "string", "maxLength": 64 },
+        "channelPreference": { "type": "string", "enum": ["general", "womens", "email", "platform"] },
+        "subject": { "type": "string", "maxLength": 160 },
+        "message": { "type": "string", "maxLength": 4000 },
+        "status": { "type": "string", "enum": ["open", "in_progress", "resolved"] },
+        "adminReply": { "type": "string", "maxLength": 2000 },
+        "repliedByEmail": { "type": "string", "maxLength": 128 },
+        "repliedAt": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "referenceCode", "userId", "senderName", "senderEmail", "portalId", "role", "channelPreference", "subject", "message", "status", "createdAt", "updatedAt"]
     }
   },
   "firestore": {
@@ -1636,6 +1661,10 @@
     "/subscription_transactions/{txId}": {
       "schema": "SubscriptionTransaction",
       "description": "Verified financial transactions created upon Super Admin payment approval"
+    },
+    "/support_tickets/{ticketId}": {
+      "schema": "SupportTicket",
+      "description": "In-platform official support tickets submitted from portals and public support center"
     }
   }
 }

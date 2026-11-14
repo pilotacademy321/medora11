@@ -72,8 +72,8 @@ export const AboutSection: React.FC = () => {
 
                 <p className="text-xs sm:text-sm text-slate-200 leading-relaxed mb-6">
                   {language === 'ar'
-                    ? 'صممت المنظومة لتكون الجسر الرقمي الآمن والموثوق بين المريض والطبيب والصيدلية والمختبر ومركز الأشعة، حيث تلتقي سهولة الاستخدام مع أعلى معايير أمن وسرية البيانات الطبية.'
-                    : 'The platform was designed to serve as the secure, trusted digital bridge connecting patients, doctors, pharmacies, labs, and imaging centers — where seamless accessibility meets clinical security.'}
+                    ? 'صممت المنظومة لتكون الجسر الرقمي الآمن والموثوق بين المريض والطبيب والصيدلية والمختبر، حيث تلتقي سهولة الاستخدام مع أعلى معايير أمن وسرية البيانات الطبية.'
+                    : 'The platform was designed to serve as the secure, trusted digital bridge connecting patients, doctors, pharmacies, and labs — where seamless accessibility meets clinical security.'}
                 </p>
 
                 <div className="pt-6 border-t border-white/15 space-y-3">

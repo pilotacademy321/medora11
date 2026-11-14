@@ -1093,6 +1093,56 @@ service cloud.firestore {
       allow write: if isSignedIn();
     }
 
+    function isValidSupportTicket(data) {
+      return data.keys().hasAll([
+          'id', 'referenceCode', 'userId', 'senderName', 'senderEmail',
+          'portalId', 'role', 'channelPreference', 'subject', 'message',
+          'status', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'referenceCode', 'userId', 'senderName', 'senderEmail',
+          'senderPhone', 'portalId', 'role', 'channelPreference', 'subject',
+          'message', 'status', 'adminReply', 'repliedByEmail', 'repliedAt',
+          'createdAt', 'updatedAt'
+        ])
+        && data.id is string && data.id.size() > 0 && data.id.size() <= 128
+        && data.referenceCode is string && data.referenceCode.size() > 0 && data.referenceCode.size() <= 64
+        && data.userId is string && data.userId.size() > 0 && data.userId.size() <= 128
+        && data.senderName is string && data.senderName.size() >= 2 && data.senderName.size() <= 128
+        && data.senderEmail is string && data.senderEmail.size() >= 5 && data.senderEmail.size() <= 128
+        && data.portalId is string && data.portalId.size() <= 64
+        && data.role is string && data.role.size() <= 64
+        && data.channelPreference in ['general', 'womens', 'email', 'platform']
+        && data.subject is string && data.subject.size() >= 2 && data.subject.size() <= 160
+        && data.message is string && data.message.size() >= 5 && data.message.size() <= 4000
+        && data.status in ['open', 'in_progress', 'resolved']
+        && data.createdAt is string
+        && data.updatedAt is string;
+    }
+
+    // Official In-Platform Support Tickets: /support_tickets/{ticketId}
+    match /support_tickets/{ticketId} {
+      allow get, list: if isSignedIn() && (
+        resource.data.userId == request.auth.uid ||
+        isAdmin()
+      );
+      allow create: if isSignedIn()
+        && isValidId(ticketId)
+        && isValidSupportTicket(incoming())
+        && incoming().id == ticketId
+        && incoming().userId == request.auth.uid
+        && incoming().status == 'open';
+      allow update: if isSignedIn()
+        && isAdmin()
+        && isValidId(ticketId)
+        && isValidSupportTicket(incoming())
+        && incoming().id == existing().id
+        && incoming().userId == existing().userId
+        && incoming().referenceCode == existing().referenceCode
+        && incoming().createdAt == existing().createdAt;
+      allow delete: if isAdmin();
+    }
+
     // Health-check connectivity probe conforming to Firebase Integration Skill
     match /test/{docId} {
       allow read: if true;

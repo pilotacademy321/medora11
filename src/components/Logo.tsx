@@ -26,33 +26,50 @@ export const Logo: React.FC<LogoProps> = ({
   }[size];
 
   const primaryTextColor = light ? 'text-white' : 'text-[#002244]';
-  const logoSrc = '/assets/images/medora-official-logo.png';
-  const fallbackSrc = '/assets/aistudio/file_00000000c14c8212bf0596ef74f11668_1fe788e9.png';
+  const webpLogoSrc = '/assets/images/medora-logo-sm.webp';
+  const logoSrc = '/assets/images/medora-logo-sm.png';
+  const fallbackSrc = '/assets/images/medora-official-logo.png';
 
   if (imageOnly) {
     return (
-      <img
-        src={logoSrc}
-        alt="MEDORA | ميدورا العراق"
-        className={`${dimensions.imgHeight} w-auto object-contain select-none transition-transform duration-200 hover:scale-[1.02] ${className}`}
-        onError={(e) => {
-          (e.target as HTMLImageElement).src = fallbackSrc;
-        }}
-      />
+      <picture>
+        <source srcSet={webpLogoSrc} type="image/webp" />
+        <img
+          src={logoSrc}
+          alt="MEDORA | ميدورا العراق"
+          decoding="async"
+          className={`${dimensions.imgHeight} w-auto object-contain select-none transition-transform duration-200 hover:scale-[1.02] ${className}`}
+          onError={(e) => {
+            const img = e.target as HTMLImageElement;
+            if (!img.dataset.fallbackApplied) {
+              img.dataset.fallbackApplied = '1';
+              img.src = fallbackSrc;
+            }
+          }}
+        />
+      </picture>
     );
   }
 
   return (
     <div className={`inline-flex items-center gap-3 select-none ${className}`}>
-      {/* Official Attached MEDORA Transparent PNG Logo */}
-      <img
-        src={logoSrc}
-        alt="MEDORA Logo"
-        className={`${dimensions.imgHeight} w-auto object-contain shrink-0 transition-transform hover:scale-105 duration-200`}
-        onError={(e) => {
-          (e.target as HTMLImageElement).src = fallbackSrc;
-        }}
-      />
+      {/* Official Optimized MEDORA Logo */}
+      <picture className="shrink-0">
+        <source srcSet={webpLogoSrc} type="image/webp" />
+        <img
+          src={logoSrc}
+          alt="MEDORA Logo"
+          decoding="async"
+          className={`${dimensions.imgHeight} w-auto object-contain shrink-0 transition-transform hover:scale-105 duration-200`}
+          onError={(e) => {
+            const img = e.target as HTMLImageElement;
+            if (!img.dataset.fallbackApplied) {
+              img.dataset.fallbackApplied = '1';
+              img.src = fallbackSrc;
+            }
+          }}
+        />
+      </picture>
 
       {/* Official MEDORA Typography */}
       <div className="flex flex-col text-start justify-center">

@@ -29,6 +29,8 @@ import { DrugInteractionPanel } from './DrugInteractionPanel';
 import { PrivateMessagingWorkspace } from './PrivateMessagingWorkspace';
 import { logAuditEvent } from '../lib/auditLogger';
 import { recordRealMetricEvent } from '../lib/platformMetrics';
+import { isPortalActive } from '../config/portalsConfig';
+import { cachedFetch } from '../lib/firestoreCache';
 import { validateAndCompressImage, formatWhatsAppUrl } from '../utils/mediaUtils';
 import { generateFacilityOrUserId } from '../utils/medicalId';
 import { collectScopedPatients, searchScopedPatients, hasValidPhoneNumber, calculateAgeFromDob, ScopedPatientRecord } from '../utils/patientSearch';
@@ -664,57 +666,61 @@ export const DoctorPortalWorkspace: React.FC<DoctorPortalWorkspaceProps> = ({ on
         // Fallback
       }
 
-      // 7. Fetch Radiology Orders
-      try {
-        const radQ = query(
-          collection(db, 'radiology_orders'),
-          where('doctorId', '==', user.uid)
-        );
-        const radSnap = await getDocs(radQ);
-        const radList = radSnap.docs.map(d => ({ id: d.id, ...d.data() } as RadiologyOrder));
-        radList.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      // 7. Fetch Radiology Orders (Skipped when Radiology portal is suspended)
+      if (isPortalActive('radiology')) {
+        try {
+          const radQ = query(
+            collection(db, 'radiology_orders'),
+            where('doctorId', '==', user.uid)
+          );
+          const radSnap = await getDocs(radQ);
+          const radList = radSnap.docs.map(d => ({ id: d.id, ...d.data() } as RadiologyOrder));
+          radList.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
-        if (isDemoMode && radList.length === 0) {
-          const sampleRadOrders: RadiologyOrder[] = [
-            {
-              id: 'demo_rad_ord_1',
-              orderNumber: 'RAD-ORD-6621',
-              doctorId: user.uid,
-              doctorName: userProfile?.displayName || 'د. أحمد الرافدين',
-              doctorSpecialty: 'استشاري أمراض باطنية وقلبية',
-              doctorPhone: '07801122334',
-              clinicName: 'عيادة الرافدين الاستشارية',
-              patientId: 'demo_patient_sara',
-              patientName: 'سارة حيدر العراقي',
-              patientPhone: '07705566778',
-              targetCenterId: 'demo_radiology_dijla',
-              targetCenterName: 'مركز دجلة للأشعة والمفراس والرنين',
-              modality: 'ultrasound',
-              bodyRegion: 'البطن والحوض (Abdomen & Pelvis)',
-              priority: 'normal',
-              clinicalIndication: 'فحص بالموجات فوق الصوتية للكبد والمرارة والكليتين',
-              preparationInstructions: 'شرب 4 أكواب ماء والامتناع عن التبول قبل الفحص بساعة',
-              status: 'completed',
-              reportId: 'demo_rad_rep_1',
-              reportSummary: 'الكبد والكليتان والمرارة ضمن المظهر الطبيعي، لا توجد حصوات أو تضخم',
-              completedAt: new Date(Date.now() - 3600000 * 18).toISOString(),
-              createdAt: new Date(Date.now() - 3600000 * 36).toISOString(),
-              updatedAt: new Date(Date.now() - 3600000 * 18).toISOString(),
-            }
-          ];
-          setRadiologyOrders(sampleRadOrders);
-        } else {
-          setRadiologyOrders(radList);
+          if (isDemoMode && radList.length === 0) {
+            const sampleRadOrders: RadiologyOrder[] = [
+              {
+                id: 'demo_rad_ord_1',
+                orderNumber: 'RAD-ORD-6621',
+                doctorId: user.uid,
+                doctorName: userProfile?.displayName || 'د. أحمد الرافدين',
+                doctorSpecialty: 'استشاري أمراض باطنية وقلبية',
+                doctorPhone: '07801122334',
+                clinicName: 'عيادة الرافدين الاستشارية',
+                patientId: 'demo_patient_sara',
+                patientName: 'سارة حيدر العراقي',
+                patientPhone: '07705566778',
+                targetCenterId: 'demo_radiology_dijla',
+                targetCenterName: 'مركز دجلة للأشعة والمفراس والرنين',
+                modality: 'ultrasound',
+                bodyRegion: 'البطن والحوض (Abdomen & Pelvis)',
+                priority: 'normal',
+                clinicalIndication: 'فحص بالموجات فوق الصوتية للكبد والمرارة والكليتين',
+                preparationInstructions: 'شرب 4 أكواب ماء والامتناع عن التبول قبل الفحص بساعة',
+                status: 'completed',
+                reportId: 'demo_rad_rep_1',
+                reportSummary: 'الكبد والكليتان والمرارة ضمن المظهر الطبيعي، لا توجد حصوات أو تضخم',
+                completedAt: new Date(Date.now() - 3600000 * 18).toISOString(),
+                createdAt: new Date(Date.now() - 3600000 * 36).toISOString(),
+                updatedAt: new Date(Date.now() - 3600000 * 18).toISOString(),
+              }
+            ];
+            setRadiologyOrders(sampleRadOrders);
+          } else {
+            setRadiologyOrders(radList);
+          }
+        } catch {
+          // Fallback
         }
-      } catch {
-        // Fallback
+      } else {
+        setRadiologyOrders([]);
       }
 
-      // 8. Fetch Registered Accredited Facilities from Firestore
+      // 8. Fetch Registered Accredited Facilities from Firestore (session-cached)
       try {
-        const pharmaSnap = await getDocs(collection(db, 'pharmacy_profiles'));
-        if (!pharmaSnap.empty) {
-          const livePharmacies = pharmaSnap.docs.map(d => {
+        const livePharmacies = await cachedFetch('doctor_dir_pharmacies', 60_000, async () => {
+          const pharmaSnap = await getDocs(collection(db, 'pharmacy_profiles'));
+          return pharmaSnap.docs.map(d => {
             const data = d.data();
             return {
               id: d.id,
@@ -723,14 +729,16 @@ export const DoctorPortalWorkspace: React.FC<DoctorPortalWorkspaceProps> = ({ on
               phone: data.phone || '',
             };
           });
+        });
+        if (livePharmacies.length > 0) {
           setFacilitiesPharmacies(livePharmacies);
         }
       } catch {}
 
       try {
-        const labSnap = await getDocs(collection(db, 'lab_profiles'));
-        if (!labSnap.empty) {
-          const liveLabs = labSnap.docs.map(d => {
+        const liveLabs = await cachedFetch('doctor_dir_labs', 60_000, async () => {
+          const labSnap = await getDocs(collection(db, 'lab_profiles'));
+          return labSnap.docs.map(d => {
             const data = d.data();
             return {
               id: d.id,
@@ -739,25 +747,33 @@ export const DoctorPortalWorkspace: React.FC<DoctorPortalWorkspaceProps> = ({ on
               phone: data.phone || '',
             };
           });
+        });
+        if (liveLabs.length > 0) {
           setFacilitiesLabs(liveLabs);
         }
       } catch {}
 
-      try {
-        const radSnap = await getDocs(collection(db, 'radiology_profiles'));
-        if (!radSnap.empty) {
-          const liveRad = radSnap.docs.map(d => {
-            const data = d.data();
-            return {
-              id: d.id,
-              name: data.centerName || 'مركز أشعة معتمد',
-              governorate: data.governorate || 'العراق',
-              phone: data.phone || '',
-            };
+      if (isPortalActive('radiology')) {
+        try {
+          const liveRad = await cachedFetch('doctor_dir_radiology', 60_000, async () => {
+            const radSnap = await getDocs(collection(db, 'radiology_profiles'));
+            return radSnap.docs.map(d => {
+              const data = d.data();
+              return {
+                id: d.id,
+                name: data.centerName || 'مركز أشعة معتمد',
+                governorate: data.governorate || 'العراق',
+                phone: data.phone || '',
+              };
+            });
           });
-          setFacilitiesRadCenters(liveRad);
-        }
-      } catch {}
+          if (liveRad.length > 0) {
+            setFacilitiesRadCenters(liveRad);
+          }
+        } catch {}
+      } else {
+        setFacilitiesRadCenters([]);
+      }
 
     } catch (err: unknown) {
       console.error('Error loading doctor workspace:', err);
@@ -1689,13 +1705,15 @@ export const DoctorPortalWorkspace: React.FC<DoctorPortalWorkspaceProps> = ({ on
         lastInteractionDate: l.createdAt,
         sourceLabel: language === 'ar' ? 'طلب مختبر' : 'Lab Order',
       })),
-      ...radiologyOrders.map((r) => ({
-        patientId: r.patientId,
-        patientName: r.patientName,
-        patientPhone: r.patientPhone,
-        lastInteractionDate: r.createdAt,
-        sourceLabel: language === 'ar' ? 'طلب أشعة' : 'Radiology Order',
-      })),
+      ...(isPortalActive('radiology')
+        ? radiologyOrders.map((r) => ({
+            patientId: r.patientId,
+            patientName: r.patientName,
+            patientPhone: r.patientPhone,
+            lastInteractionDate: r.createdAt,
+            sourceLabel: language === 'ar' ? 'طلب أشعة' : 'Radiology Order',
+          }))
+        : []),
     ]);
   };
 
@@ -2234,7 +2252,12 @@ export const DoctorPortalWorkspace: React.FC<DoctorPortalWorkspaceProps> = ({ on
           { id: 'dashboard', labelAr: 'لوحة المؤشرات', labelEn: 'Dashboard', icon: Activity },
           { id: 'appointments', labelAr: `المواعيد (${appointments.length})`, labelEn: `Appointments (${appointments.length})`, icon: Calendar },
           { id: 'prescriptions', labelAr: `الوصفات الإلكترونية (${prescriptions.length})`, labelEn: `Prescriptions (${prescriptions.length})`, icon: Pill },
-          { id: 'referrals', labelAr: `التحويلات والفحوصات (${labOrders.length + radiologyOrders.length})`, labelEn: `Referrals (${labOrders.length + radiologyOrders.length})`, icon: FlaskConical },
+          {
+            id: 'referrals',
+            labelAr: `التحويلات والفحوصات (${labOrders.length + (isPortalActive('radiology') ? radiologyOrders.length : 0)})`,
+            labelEn: `Referrals (${labOrders.length + (isPortalActive('radiology') ? radiologyOrders.length : 0)})`,
+            icon: FlaskConical,
+          },
           { id: 'records', labelAr: `الهوية والملف الطبي (${doctorChartsList.length})`, labelEn: `Patient ID & Charts (${doctorChartsList.length})`, icon: FolderLock },
           { id: 'schedule', labelAr: 'الدوام ومعلومات العيادة', labelEn: 'Schedule & Clinic', icon: Clock },
           { id: 'secretary', labelAr: `السكرتارية (${delegations.length})`, labelEn: `Secretary (${delegations.length})`, icon: Users },
@@ -3380,7 +3403,9 @@ export const DoctorPortalWorkspace: React.FC<DoctorPortalWorkspaceProps> = ({ on
                   { id: 'radiology_report', label: language === 'ar' ? 'أشعة وسونار' : 'Radiology & Scans' },
                   { id: 'prescription', label: language === 'ar' ? 'روشتات إلكترونية' : 'e-Prescriptions' },
                   { id: 'clinical_note', label: language === 'ar' ? 'تشخيص وملاحظات' : 'Clinical Notes' },
-                ].map((f) => (
+                ]
+                  .filter((f) => f.id !== 'radiology_report' || isPortalActive('radiology'))
+                  .map((f) => (
                   <button
                     key={f.id}
                     onClick={() => setRecordFilter(f.id)}
@@ -4047,13 +4072,15 @@ export const DoctorPortalWorkspace: React.FC<DoctorPortalWorkspaceProps> = ({ on
               <div className="flex items-center gap-2 mb-1">
                 <FlaskConical className="text-purple-600" size={22} />
                 <h3 className="font-bold text-lg text-slate-900">
-                  {language === 'ar' ? 'التحويلات والفحوصات الطبية (Lab & Radiology Orders)' : 'Diagnostic Referrals & Orders'}
+                  {language === 'ar'
+                    ? (isPortalActive('radiology') ? 'التحويلات والفحوصات الطبية (Lab & Radiology Orders)' : 'التحويلات والفحوصات المخبرية (Lab Orders)')
+                    : (isPortalActive('radiology') ? 'Diagnostic Referrals & Orders' : 'Clinical Laboratory Orders')}
                 </h3>
               </div>
               <p className="text-xs text-slate-500">
                 {language === 'ar' 
-                  ? 'إرسال طلبات التحاليل المختبرية وفحوصات الأشعة والسونار ومتابعة النتائج والتقارير المرفقة مباشرة' 
-                  : 'Order and monitor clinical laboratory tests and medical imaging studies directly'}
+                  ? (isPortalActive('radiology') ? 'إرسال طلبات التحاليل المختبرية وفحوصات الأشعة والسونار ومتابعة النتائج والتقارير المرفقة مباشرة' : 'إرسال طلبات التحاليل المختبرية ومتابعة النتائج المرفقة مباشرة من المختبرات المعتمدة')
+                  : (isPortalActive('radiology') ? 'Order and monitor clinical laboratory tests and medical imaging studies directly' : 'Order and monitor clinical laboratory tests directly')}
               </p>
             </div>
 
@@ -4068,16 +4095,18 @@ export const DoctorPortalWorkspace: React.FC<DoctorPortalWorkspaceProps> = ({ on
                 <Plus size={16} />
                 <span>{language === 'ar' ? '+ طلب تحاليل مختبر' : '+ Lab Order'}</span>
               </button>
-              <button
-                onClick={() => {
-                  setReferralSubTab('radiology');
-                  setShowNewRadOrderModal(true);
-                }}
-                className="px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs sm:text-sm shadow-md transition-all flex items-center gap-2 cursor-pointer"
-              >
-                <Scan size={16} />
-                <span>{language === 'ar' ? '+ طلب أشعة وسونار' : '+ Imaging Order'}</span>
-              </button>
+              {isPortalActive('radiology') && (
+                <button
+                  onClick={() => {
+                    setReferralSubTab('radiology');
+                    setShowNewRadOrderModal(true);
+                  }}
+                  className="px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs sm:text-sm shadow-md transition-all flex items-center gap-2 cursor-pointer"
+                >
+                  <Scan size={16} />
+                  <span>{language === 'ar' ? '+ طلب أشعة وسونار' : '+ Imaging Order'}</span>
+                </button>
+              )}
             </div>
           </div>
 
@@ -4094,17 +4123,19 @@ export const DoctorPortalWorkspace: React.FC<DoctorPortalWorkspaceProps> = ({ on
               <FlaskConical size={15} />
               <span>{language === 'ar' ? `طلبات المختبر والتحاليل (${labOrders.length})` : `Lab Orders (${labOrders.length})`}</span>
             </button>
-            <button
-              onClick={() => setReferralSubTab('radiology')}
-              className={`flex items-center gap-2 px-4 py-2 rounded-xl font-bold text-xs transition-colors cursor-pointer ${
-                referralSubTab === 'radiology'
-                  ? 'bg-blue-600 text-white shadow-xs'
-                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-              }`}
-            >
-              <Scan size={15} />
-              <span>{language === 'ar' ? `طلبات الأشعة والسونار (${radiologyOrders.length})` : `Radiology Orders (${radiologyOrders.length})`}</span>
-            </button>
+            {isPortalActive('radiology') && (
+              <button
+                onClick={() => setReferralSubTab('radiology')}
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl font-bold text-xs transition-colors cursor-pointer ${
+                  referralSubTab === 'radiology'
+                    ? 'bg-blue-600 text-white shadow-xs'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                <Scan size={15} />
+                <span>{language === 'ar' ? `طلبات الأشعة والسونار (${radiologyOrders.length})` : `Radiology Orders (${radiologyOrders.length})`}</span>
+              </button>
+            )}
           </div>
 
           {/* LAB ORDERS LIST */}
@@ -4223,7 +4254,7 @@ export const DoctorPortalWorkspace: React.FC<DoctorPortalWorkspaceProps> = ({ on
           )}
 
           {/* RADIOLOGY ORDERS LIST */}
-          {referralSubTab === 'radiology' && (
+          {referralSubTab === 'radiology' && isPortalActive('radiology') && (
             <div className="space-y-4">
               {radiologyOrders.length === 0 ? (
                 <div className="bg-white rounded-3xl p-12 text-center border border-slate-200">
@@ -5117,7 +5148,9 @@ export const DoctorPortalWorkspace: React.FC<DoctorPortalWorkspaceProps> = ({ on
                     <option value="clinical_note">{language === 'ar' ? 'تشخيص وملاحظات سريرية' : 'Clinical Diagnosis'}</option>
                     <option value="prescription">{language === 'ar' ? 'روشتة علاجية' : 'e-Prescription'}</option>
                     <option value="lab_result">{language === 'ar' ? 'نتائج فحص مخبري' : 'Lab Result'}</option>
-                    <option value="radiology_report">{language === 'ar' ? 'تقرير أشعة وسونار' : 'Radiology Report'}</option>
+                    {isPortalActive('radiology') && (
+                      <option value="radiology_report">{language === 'ar' ? 'تقرير أشعة وسونار' : 'Radiology Report'}</option>
+                    )}
                     <option value="diagnostic_summary">{language === 'ar' ? 'ملخص خروج / تقرير شامل' : 'Summary Report'}</option>
                   </select>
                 </div>

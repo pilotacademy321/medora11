@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
-import { AuthModal } from './AuthModal';
+const AuthModal = React.lazy(() =>
+  import('./AuthModal').then((m) => ({ default: m.AuthModal }))
+);
 import { 
   Menu, 
   X, 
@@ -68,6 +70,7 @@ interface HeaderProps {
   onSelectPortal?: (portalId: PortalId) => void;
   onOpenNotificationSettings?: () => void;
   onOpenNotificationInbox?: () => void;
+  hideSearch?: boolean;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -79,6 +82,7 @@ export const Header: React.FC<HeaderProps> = ({
   onSelectPortal,
   onOpenNotificationSettings,
   onOpenNotificationInbox,
+  hideSearch = false,
 }) => {
   const { language, setLanguage, isRTL } = useLanguage();
   const { 
@@ -186,11 +190,7 @@ export const Header: React.FC<HeaderProps> = ({
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (searchQuery.trim()) {
-      if (onSelectPortal) {
-        onSelectPortal('pharmacy');
-      } else {
-        onNavigate('portals');
-      }
+      onNavigate('portals');
     }
   };
 
@@ -231,22 +231,35 @@ export const Header: React.FC<HeaderProps> = ({
                 </button>
               )}
 
-              {/* Mobile Logo Branding */}
+              {/* Mobile Logo Branding (also shown on desktop when sidebar is hidden on Welcome Screen) */}
               <div 
-                className="lg:hidden shrink-0 flex items-center cursor-pointer" 
+                className={`${onToggleSidebar ? 'lg:hidden ' : ''}shrink-0 flex items-center cursor-pointer`} 
                 onClick={onResetToHome}
                 title="MEDORA | ميدورا العراق"
               >
-                <img 
-                  src="/assets/images/medora-official-logo.png" 
-                  alt="MEDORA Logo" 
-                  className="h-7 sm:h-8 w-auto object-contain"
-                  onError={(e) => { (e.target as HTMLImageElement).src = '/assets/images/medora-logo.png'; }}
-                />
+                <picture>
+                  <source srcSet="/assets/images/medora-logo-sm.webp" type="image/webp" />
+                  <img
+                    src="/assets/images/medora-logo-sm.png"
+                    alt="MEDORA Logo"
+                    width={42}
+                    height={28}
+                    decoding="async"
+                    className="h-7 sm:h-8 w-auto object-contain"
+                    onError={(e) => {
+                      const img = e.target as HTMLImageElement;
+                      if (!img.dataset.fallbackApplied) {
+                        img.dataset.fallbackApplied = '1';
+                        img.src = '/assets/images/medora-logo.png';
+                      }
+                    }}
+                  />
+                </picture>
               </div>
 
               {/* Desktop / Tablet Search Bar */}
-              <form onSubmit={handleSearchSubmit} className="relative w-full hidden md:block min-w-0">
+              {!hideSearch && (
+                <form onSubmit={handleSearchSubmit} className="relative w-full hidden md:block min-w-0">
                 <div className="relative flex items-center">
                   <input
                     type="text"
@@ -263,7 +276,8 @@ export const Header: React.FC<HeaderProps> = ({
                     <Search size={17} />
                   </div>
                 </div>
-              </form>
+                </form>
+              )}
             </div>
 
             {/* Left side in RTL: Language, Messages, Notifications, User Profile Chip */}
@@ -602,12 +616,16 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
       </header>
 
-      {/* Auth Modal */}
-      <AuthModal
-        isOpen={authModalOpen}
-        initialMode={authModalInitialMode}
-        onClose={() => setAuthModalOpen(false)}
-      />
+      {/* Lazy-Loaded Auth Modal */}
+      {authModalOpen && (
+        <React.Suspense fallback={null}>
+          <AuthModal
+            isOpen={authModalOpen}
+            initialMode={authModalInitialMode}
+            onClose={() => setAuthModalOpen(false)}
+          />
+        </React.Suspense>
+      )}
 
       {/* Account Management Modal */}
       {showAccountModal && user && (

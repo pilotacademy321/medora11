@@ -12,6 +12,7 @@ import {
   UserProfile,
   UserRole,
 } from '../types';
+import { isPortalSuspended, isRoleSuspended } from '../config/portalsConfig';
 
 export interface AuthorizedMessagingPeer {
   uid: string;
@@ -99,6 +100,13 @@ export function getAuthorizedCategoriesForRole(role: UserRole): MessagingCategor
   };
   const allowedRoles = allowedByRole[role] || ['super_admin'];
   return ALL_MESSAGING_CATEGORIES.filter((cat) => allowedRoles.includes(cat.role));
+}
+
+/**
+ * Returns active (non-suspended) messaging categories for live UI browsing.
+ */
+export function getActiveAuthorizedCategoriesForRole(role: UserRole): MessagingCategoryDescriptor[] {
+  return getAuthorizedCategoriesForRole(role).filter((cat) => !isRoleSuspended(cat.role));
 }
 
 /**
@@ -366,7 +374,9 @@ export async function loadAuthorizedMessagingPeers(
         getDocs(query(collection(db, 'doctor_patient_charts'), where('doctorId', '==', currentUserUid))),
         getDocs(query(collection(db, 'electronic_prescriptions'), where('doctorId', '==', currentUserUid))),
         getDocs(query(collection(db, 'lab_orders'), where('doctorId', '==', currentUserUid))),
-        getDocs(query(collection(db, 'radiology_orders'), where('doctorId', '==', currentUserUid))),
+        isPortalSuspended('radiology')
+          ? Promise.resolve(null)
+          : getDocs(query(collection(db, 'radiology_orders'), where('doctorId', '==', currentUserUid))),
         getDocs(query(collection(db, 'record_sharing_permissions'), where('targetDoctorId', '==', currentUserUid))),
       ]);
 
@@ -421,7 +431,7 @@ export async function loadAuthorizedMessagingPeers(
           });
         }
       });
-      radOrders.forEach((d) => {
+      radOrders?.forEach((d) => {
         const data = d.data();
         if (data.patientId) {
           upsertPeer({
@@ -543,7 +553,9 @@ export async function loadAuthorizedMessagingPeers(
         getDocs(query(collection(db, 'pharmacy_orders'), where('pharmacyId', '==', currentUserUid))),
         getDocs(query(collection(db, 'electronic_prescriptions'), where('targetPharmacyId', '==', currentUserUid))),
         getDocs(query(collection(db, 'electronic_prescriptions'), where('dispensedPharmacyId', '==', currentUserUid))),
-        getDocs(query(collection(db, 'wholesale_orders'), where('pharmacyId', '==', currentUserUid))),
+        isPortalSuspended('wholesaler')
+          ? Promise.resolve(null)
+          : getDocs(query(collection(db, 'wholesale_orders'), where('pharmacyId', '==', currentUserUid))),
       ]);
 
       orders.forEach((d) => {
@@ -585,7 +597,7 @@ export async function loadAuthorizedMessagingPeers(
           });
         }
       });
-      wholesaleOrders.forEach((d) => {
+      wholesaleOrders?.forEach((d) => {
         const data = d.data();
         if (data.wholesalerId) {
           upsertPeer({
@@ -616,7 +628,8 @@ export async function loadAuthorizedMessagingPeers(
         }
       });
     } else if (currentUserRole === 'patient') {
-      // Strictly ONLY linked doctors, labs, radiology centers, and pharmacies from the patient's own real records
+      // Strictly ONLY linked doctors, labs, and pharmacies from the patient's own real records (skipping suspended radiology queries)
+      const radSuspended = isPortalSuspended('radiology');
       const [appts, charts, rxs, labBookings, labOrders, labResults, radBookings, radOrders, radReports, pharmOrders, shares] = await Promise.all([
         getDocs(query(collection(db, 'appointments'), where('patientId', '==', currentUserUid))),
         getDocs(query(collection(db, 'doctor_patient_charts'), where('patientId', '==', currentUserUid))),
@@ -624,9 +637,15 @@ export async function loadAuthorizedMessagingPeers(
         getDocs(query(collection(db, 'lab_bookings'), where('patientId', '==', currentUserUid))),
         getDocs(query(collection(db, 'lab_orders'), where('patientId', '==', currentUserUid))),
         getDocs(query(collection(db, 'lab_results'), where('patientId', '==', currentUserUid))),
-        getDocs(query(collection(db, 'radiology_bookings'), where('patientId', '==', currentUserUid))),
-        getDocs(query(collection(db, 'radiology_orders'), where('patientId', '==', currentUserUid))),
-        getDocs(query(collection(db, 'radiology_reports'), where('patientId', '==', currentUserUid))),
+        radSuspended
+          ? Promise.resolve(null)
+          : getDocs(query(collection(db, 'radiology_bookings'), where('patientId', '==', currentUserUid))),
+        radSuspended
+          ? Promise.resolve(null)
+          : getDocs(query(collection(db, 'radiology_orders'), where('patientId', '==', currentUserUid))),
+        radSuspended
+          ? Promise.resolve(null)
+          : getDocs(query(collection(db, 'radiology_reports'), where('patientId', '==', currentUserUid))),
         getDocs(query(collection(db, 'pharmacy_orders'), where('patientId', '==', currentUserUid))),
         getDocs(query(collection(db, 'record_sharing_permissions'), where('patientId', '==', currentUserUid))),
       ]);
@@ -742,7 +761,7 @@ export async function loadAuthorizedMessagingPeers(
           });
         }
       });
-      radBookings.forEach((d) => {
+      radBookings?.forEach((d) => {
         const data = d.data();
         if (data.centerId) {
           upsertPeer({
@@ -754,7 +773,7 @@ export async function loadAuthorizedMessagingPeers(
           });
         }
       });
-      radOrders.forEach((d) => {
+      radOrders?.forEach((d) => {
         const data = d.data();
         if (data.targetCenterId) {
           upsertPeer({
@@ -766,7 +785,7 @@ export async function loadAuthorizedMessagingPeers(
           });
         }
       });
-      radReports.forEach((d) => {
+      radReports?.forEach((d) => {
         const data = d.data();
         if (data.centerId) {
           upsertPeer({
@@ -783,5 +802,9 @@ export async function loadAuthorizedMessagingPeers(
     console.warn('[MessagingPermissions] Error loading authorized peers:', err);
   }
 
-  return Array.from(peerMap.values());
+  const allPeers = Array.from(peerMap.values());
+  if (currentUserRole !== 'super_admin') {
+    return allPeers.filter((peer) => !isRoleSuspended(peer.role));
+  }
+  return allPeers;
 }

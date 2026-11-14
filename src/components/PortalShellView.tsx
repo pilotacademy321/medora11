@@ -36,9 +36,18 @@ import {
   Layers,
   Sparkles,
   Trash2,
-  Wallet
+  Wallet,
+  Headphones
 } from 'lucide-react';
-import { SubscriptionPaymentModal } from './SubscriptionPaymentModal';
+import { isPortalActive, isPortalSuspended, getSuspendedPortalNotice } from '../config/portalsConfig';
+import { OFFICIAL_SUPPORT_CONFIG } from '../config/officialSupportConfig';
+import { buildWhatsAppSupportHref } from '../utils/supportRouting';
+const SubscriptionPaymentModal = React.lazy(() =>
+  import('./SubscriptionPaymentModal').then((m) => ({ default: m.SubscriptionPaymentModal }))
+);
+const OfficialSupportCenter = React.lazy(() =>
+  import('./OfficialSupportCenter').then((m) => ({ default: m.OfficialSupportCenter }))
+);
 import {
   checkAndNotifySubscriptionExpiry,
   subscribeUserPaymentRequests,
@@ -108,6 +117,7 @@ export const PortalShellView: React.FC<PortalShellViewProps> = ({
   const [providerSubscription, setProviderSubscription] = useState<UserSubscription | null>(null);
   const [providerPaymentRequests, setProviderPaymentRequests] = useState<PaymentRequest[]>([]);
   const [showCheckoutModal, setShowCheckoutModal] = useState(false);
+  const [showSupportModal, setShowSupportModal] = useState(false);
 
   const handleConfirmSelfDelete = async () => {
     setIsDeletingOwnAccount(true);
@@ -178,12 +188,15 @@ export const PortalShellView: React.FC<PortalShellViewProps> = ({
   const isRejected = userProfile?.status === 'rejected';
   const isSuspended = userProfile?.status === 'suspended';
 
+  const portalSuspended = isPortalSuspended(portal.id);
+
   const isProviderSubscriptionPortal =
-    portal.id === 'doctor' ||
-    portal.id === 'radiology' ||
-    portal.id === 'laboratory' ||
-    portal.id === 'pharmacy' ||
-    portal.id === 'wholesaler';
+    !portalSuspended &&
+    (portal.id === 'doctor' ||
+      portal.id === 'radiology' ||
+      portal.id === 'laboratory' ||
+      portal.id === 'pharmacy' ||
+      portal.id === 'wholesaler');
 
   useEffect(() => {
     if (!user?.uid || !isProviderSubscriptionPortal || !isApproved) {
@@ -214,24 +227,44 @@ export const PortalShellView: React.FC<PortalShellViewProps> = ({
         <div className="flex flex-wrap items-center justify-between gap-4 py-3 border-b border-slate-200">
           <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
             <button
-              onClick={onBackToHome}
-              className="inline-flex items-center gap-1.5 text-xs sm:text-sm font-bold text-slate-700 hover:text-[#003366] transition-colors cursor-pointer group"
+              type="button"
+              onClick={onBackToPortals || onBackToHome}
+              className="inline-flex items-center gap-2 px-4 py-2 min-h-[42px] rounded-xl text-xs sm:text-sm font-bold text-white bg-[#003366] hover:bg-[#002244] transition-colors cursor-pointer group shadow-xs"
             >
               {isRTL ? (
-                <ArrowRight size={16} className="transition-transform group-hover:translate-x-1" />
+                <ArrowRight size={16} className="transition-transform group-hover:translate-x-0.5" />
               ) : (
-                <ArrowLeft size={16} className="transition-transform group-hover:-translate-x-1" />
+                <ArrowLeft size={16} className="transition-transform group-hover:-translate-x-0.5" />
               )}
-              <span>{language === 'ar' ? 'العودة إلى الصفحة الرئيسية' : 'Return to Home'}</span>
+              <span>{language === 'ar' ? 'العودة إلى اختيار الأقسام' : 'Back to Sections'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={onBackToHome}
+              className="inline-flex items-center gap-1.5 px-3 py-2 min-h-[42px] rounded-xl text-xs font-semibold text-slate-600 hover:text-[#003366] hover:bg-slate-100 transition-colors cursor-pointer"
+            >
+              <span>{language === 'ar' ? 'شاشة الترحيب' : 'Welcome'}</span>
             </button>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+            <button
+              type="button"
+              onClick={() => setShowSupportModal(true)}
+              data-portal-support-trigger="true"
+              className="px-3.5 py-2 min-h-[42px] rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-900 transition-colors flex items-center gap-1.5 text-xs font-bold cursor-pointer"
+              title={language === 'ar' ? 'فتح مركز الدعم الرسمي MEDORA' : 'Open MEDORA Official Support Center'}
+            >
+              <Headphones size={15} className="text-emerald-700" />
+              <span>{language === 'ar' ? 'مركز الدعم الرسمي' : 'Support Center'}</span>
+            </button>
+
             {isAuthenticated && (
               <button
                 onClick={handleRefresh}
                 disabled={refreshing}
-                className="p-1.5 rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-100 transition-colors flex items-center gap-1.5 text-xs font-semibold cursor-pointer"
+                className="p-2 min-h-[42px] rounded-xl bg-white border border-slate-200 text-slate-600 hover:bg-slate-100 transition-colors flex items-center gap-1.5 text-xs font-semibold cursor-pointer"
                 title="تحديث البيانات من الخادم"
               >
                 <RefreshCw size={14} className={refreshing ? 'animate-spin text-[#003366]' : ''} />
@@ -324,10 +357,56 @@ export const PortalShellView: React.FC<PortalShellViewProps> = ({
           </div>
         </div>
 
+        {/* STATE 0: Temporarily Suspended Portal Gate (preserves code & data non-destructively) */}
+        {portalSuspended && (() => {
+          const notice = getSuspendedPortalNotice(portal.id, language);
+          return (
+            <div className="bg-white rounded-3xl p-8 sm:p-12 shadow-sm border border-amber-200 text-center mb-8">
+              <div className="w-16 h-16 rounded-2xl bg-amber-50 border border-amber-200 text-amber-700 flex items-center justify-center mx-auto mb-5">
+                <Clock size={32} />
+              </div>
+
+              <p className="text-xs font-semibold text-amber-800 mb-2">
+                {notice.subtitle}
+              </p>
+
+              <h2 className="text-xl sm:text-2xl font-black text-slate-900">
+                {notice.title}
+              </h2>
+
+              <p className="mt-3 text-xs sm:text-sm text-slate-600 max-w-xl mx-auto leading-relaxed">
+                {notice.description}
+              </p>
+
+              <div className="mt-5 p-4 rounded-2xl bg-slate-50 border border-slate-200 max-w-xl mx-auto text-xs text-slate-700 leading-relaxed flex items-start gap-2.5 text-start">
+                <ShieldCheck size={18} className="text-emerald-600 shrink-0 mt-0.5" />
+                <span>{notice.preservationNote}</span>
+              </div>
+
+              <div className="mt-7 flex flex-col sm:flex-row items-center justify-center gap-3">
+                <button
+                  type="button"
+                  onClick={onBackToPortals || onBackToHome}
+                  className="w-full sm:w-auto px-6 py-3 rounded-xl text-xs sm:text-sm font-bold text-white bg-[#003366] hover:bg-[#002244] transition-colors cursor-pointer min-h-[44px]"
+                >
+                  {language === 'ar' ? 'العودة إلى اختيار الأقسام' : 'Back to Sections'}
+                </button>
+                <button
+                  type="button"
+                  onClick={onBackToHome}
+                  className="w-full sm:w-auto px-6 py-3 rounded-xl text-xs sm:text-sm font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 transition-colors cursor-pointer min-h-[44px]"
+                >
+                  {language === 'ar' ? 'شاشة الترحيب' : 'Welcome Screen'}
+                </button>
+              </div>
+            </div>
+          );
+        })()}
+
         {/* AUTHENTICATION STATE BRANCHING */}
 
         {/* STATE 1: User is NOT Authenticated */}
-        {!isAuthenticated && (
+        {!portalSuspended && !isAuthenticated && (
           <div className="bg-white rounded-3xl p-8 sm:p-12 shadow-sm border border-slate-200 text-center mb-8">
             <div 
               className="w-16 h-16 rounded-2xl flex items-center justify-center text-white mx-auto mb-4 shadow-md"
@@ -438,7 +517,7 @@ export const PortalShellView: React.FC<PortalShellViewProps> = ({
         )}
 
         {/* STATE 2: User IS Authenticated, but Access is Denied */}
-        {isAuthenticated && !roleMatches && (
+        {!portalSuspended && isAuthenticated && !roleMatches && (
           <div className="bg-white rounded-3xl p-8 sm:p-10 shadow-sm border border-amber-200 mb-8 text-center">
             {isSuperAdminIsolated ? (
               <>
@@ -457,7 +536,7 @@ export const PortalShellView: React.FC<PortalShellViewProps> = ({
 
                 <p className="mt-3 text-xs sm:text-sm text-slate-700 max-w-xl mx-auto leading-relaxed">
                   {language === 'ar'
-                    ? 'حساب المشرف العام (bcgmoc@gmail.com) مخصص حصرياً للرقابة المركزية والتدقيق الأمني وإدارة منصة MEDORA العليا، ولا يملك صلاحية الدخول المباشر إلى بوابات الرعاية والتشغيل السريري واليومي (المرضى، الأطباء، الصيدليات، المختبرات، الأشعة، المذاخر، السكرتارية) صوناً لخصوصية وسرية البيانات الطبية.'
+                    ? 'حساب المشرف العام (bcgmoc@gmail.com) مخصص حصرياً للرقابة المركزية والتدقيق الأمني وإدارة منصة MEDORA العليا، ولا يملك صلاحية الدخول المباشر إلى بوابات الرعاية والتشغيل السريري واليومي (المرضى، الأطباء، الصيدليات، المختبرات، السكرتارية) صوناً لخصوصية وسرية البيانات الطبية.'
                     : 'The Super Admin account (bcgmoc@gmail.com) is strictly dedicated to central governance and platform security. To safeguard medical confidentiality, this account is prevented from accessing operational clinical portals.'}
                 </p>
 
@@ -511,8 +590,10 @@ export const PortalShellView: React.FC<PortalShellViewProps> = ({
                   <button
                     onClick={() => {
                       const targetPortal = PORTALS_DATA.find((p) => p.role === userProfile?.role);
-                      if (targetPortal) {
+                      if (targetPortal && isPortalActive(targetPortal.id)) {
                         onSelectPortal(targetPortal.id);
+                      } else {
+                        onBackToHome();
                       }
                     }}
                     className="px-6 py-3 rounded-xl text-xs sm:text-sm font-bold text-white brand-gradient-btn shadow-md hover:shadow-lg transition-all cursor-pointer"
@@ -533,7 +614,7 @@ export const PortalShellView: React.FC<PortalShellViewProps> = ({
         )}
 
         {/* STATE 3: User IS Authenticated and Role matches, but Status is PENDING */}
-        {isAuthenticated && roleMatches && isPending && !isAdmin && (
+        {!portalSuspended && isAuthenticated && roleMatches && isPending && !isAdmin && (
           <div className="bg-white rounded-3xl p-8 sm:p-10 shadow-sm border border-amber-200 mb-8">
             <div className="flex flex-col md:flex-row items-start gap-6">
               <div className="w-16 h-16 rounded-2xl bg-amber-500 text-white flex items-center justify-center shrink-0 shadow-md">
@@ -584,12 +665,14 @@ export const PortalShellView: React.FC<PortalShellViewProps> = ({
                   </button>
 
                   <a
-                    href="https://wa.me/9647885663748"
+                    href={buildWhatsAppSupportHref('main')}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="px-4 py-2.5 rounded-xl text-xs font-bold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 transition-colors"
                   >
-                    {language === 'ar' ? 'تسريع الاعتماد عبر واتساب: 07885663748' : 'Expedite via WhatsApp: 07885663748'}
+                    {language === 'ar'
+                      ? `تسريع الاعتماد (${OFFICIAL_SUPPORT_CONFIG.generalSupport.titleAr}): ${OFFICIAL_SUPPORT_CONFIG.generalSupport.displayPhone}`
+                      : `Expedite via WhatsApp: ${OFFICIAL_SUPPORT_CONFIG.generalSupport.displayPhone}`}
                   </a>
 
                   <button
@@ -607,7 +690,7 @@ export const PortalShellView: React.FC<PortalShellViewProps> = ({
         )}
 
         {/* STATE 4: User IS Authenticated and Role matches, but Status is REJECTED or SUSPENDED */}
-        {isAuthenticated && roleMatches && (isRejected || isSuspended) && (
+        {!portalSuspended && isAuthenticated && roleMatches && (isRejected || isSuspended) && (
           <div className="bg-white rounded-3xl p-8 sm:p-10 shadow-sm border border-red-200 mb-8 text-center">
             <div className="w-16 h-16 rounded-2xl bg-red-100 text-red-600 flex items-center justify-center mx-auto mb-4">
               <XCircle size={32} />
@@ -627,26 +710,43 @@ export const PortalShellView: React.FC<PortalShellViewProps> = ({
 
             <div className="mt-6 flex flex-wrap justify-center gap-3">
               <a
-                href="mailto:support@medora-iq.com"
+                href={OFFICIAL_SUPPORT_CONFIG.email.mailtoHref}
                 className="px-6 py-2.5 rounded-xl text-xs font-bold text-white bg-[#003366] hover:bg-[#002244]"
               >
-                {language === 'ar' ? 'مراسلة الدعم: support@medora-iq.com' : 'Email Support: support@medora-iq.com'}
+                {language === 'ar'
+                  ? `مراسلة الدعم: ${OFFICIAL_SUPPORT_CONFIG.email.address}`
+                  : `Email Support: ${OFFICIAL_SUPPORT_CONFIG.email.address}`}
               </a>
 
               <a
-                href="https://wa.me/9647885663748"
+                href={buildWhatsAppSupportHref('main')}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="px-4 py-2.5 rounded-xl text-xs font-bold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 transition-colors"
               >
-                {language === 'ar' ? 'واتساب الدعم: 07885663748' : 'WhatsApp Support: 07885663748'}
+                {language === 'ar'
+                  ? `${OFFICIAL_SUPPORT_CONFIG.generalSupport.titleAr}: ${OFFICIAL_SUPPORT_CONFIG.generalSupport.displayPhone}`
+                  : `General Support: ${OFFICIAL_SUPPORT_CONFIG.generalSupport.displayPhone}`}
               </a>
 
               <a
-                href="tel:+9647885663748"
+                href={buildWhatsAppSupportHref('womens')}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-4 py-2.5 rounded-xl text-xs font-bold text-rose-800 bg-rose-50 hover:bg-rose-100 border border-rose-200 transition-colors"
+              >
+                {language === 'ar'
+                  ? `${OFFICIAL_SUPPORT_CONFIG.womensSupport.titleAr}: ${OFFICIAL_SUPPORT_CONFIG.womensSupport.displayPhone}`
+                  : `Women's Support: ${OFFICIAL_SUPPORT_CONFIG.womensSupport.displayPhone}`}
+              </a>
+
+              <a
+                href={OFFICIAL_SUPPORT_CONFIG.generalSupport.callUrl}
                 className="px-4 py-2.5 rounded-xl text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200 transition-colors"
               >
-                {language === 'ar' ? 'اتصال: 07885663748' : 'Call: 07885663748'}
+                {language === 'ar'
+                  ? `اتصال: ${OFFICIAL_SUPPORT_CONFIG.generalSupport.displayPhone}`
+                  : `Call: ${OFFICIAL_SUPPORT_CONFIG.generalSupport.displayPhone}`}
               </a>
 
               <button
@@ -662,7 +762,7 @@ export const PortalShellView: React.FC<PortalShellViewProps> = ({
         )}
 
         {/* STATE 5: User IS Authenticated and Role matches, Status is APPROVED -> OPERATIONAL DASHBOARD */}
-        {isAuthenticated && roleMatches && (isApproved || isAdmin) && (
+        {!portalSuspended && isAuthenticated && roleMatches && (isApproved || isAdmin) && (
           <div className="space-y-8 mb-8">
             {/* APPROVED OPERATIONAL DASHBOARD HEADER */}
             <div className="bg-gradient-to-r from-slate-900 to-[#003366] rounded-3xl p-6 sm:p-8 text-white shadow-xl print:hidden">
@@ -857,29 +957,48 @@ export const PortalShellView: React.FC<PortalShellViewProps> = ({
           </div>
         )}
 
-        {/* Quick Portal Switcher */}
-        <div className="bg-white rounded-3xl p-6 sm:p-8 shadow-sm border border-slate-200 print:hidden">
-          <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-4">
-            {t.portalShell.otherPortals}
-          </span>
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3">
-            {PORTALS_DATA.filter((p) => p.id !== portal.id).map((other) => (
-              <button
-                key={other.id}
-                onClick={() => onSelectPortal(other.id)}
-                className="p-3 rounded-xl border border-slate-200 hover:border-slate-300 hover:bg-slate-50 transition-all text-center flex flex-col items-center gap-1.5 cursor-pointer group"
-              >
-                <div
-                  className="w-8 h-8 rounded-lg flex items-center justify-center text-white text-xs transition-transform group-hover:scale-110"
-                  style={{ backgroundColor: other.accentColor }}
-                >
-                  {getPortalIcon(other.iconName, 18)}
-                </div>
-                <span className="text-xs font-bold text-slate-800">
-                  {language === 'ar' ? other.titleAr.replace('بوابة ', '') : other.titleEn.replace(' Portal', '')}
-                </span>
-              </button>
-            ))}
+        {/* OFFICIAL MEDORA SUPPORT CENTER APPLIED UNIFORMLY ACROSS EVERY PORTAL */}
+        <div className="mb-8 print:hidden">
+          <React.Suspense fallback={null}>
+            <OfficialSupportCenter
+              variant="portal"
+              defaultOpenForm={false}
+              portalId={portal.id}
+              portalTitleAr={portal.titleAr}
+              portalTitleEn={portal.titleEn}
+            />
+          </React.Suspense>
+        </div>
+
+        {/* Dedicated Single-Portal Bottom Return Bar (no sibling portals listed) */}
+        <div className="bg-white rounded-3xl p-5 sm:p-6 shadow-xs border border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-4 print:hidden">
+          <div className="text-center sm:text-start">
+            <p className="text-sm font-bold text-slate-900">
+              {language === 'ar' ? portal.titleAr : portal.titleEn}
+            </p>
+            <p className="text-xs text-slate-500 mt-0.5">
+              {language === 'ar'
+                ? 'بوابة مستقلة ومعزولة الصلاحيات ضمن منصات MEDORA'
+                : 'Isolated portal workspace within MEDORA Platforms'}
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-center gap-2.5">
+            <button
+              type="button"
+              onClick={onBackToPortals || onBackToHome}
+              className="px-5 py-2.5 min-h-[44px] rounded-xl text-xs sm:text-sm font-bold text-white bg-[#003366] hover:bg-[#002244] transition-colors flex items-center gap-2 cursor-pointer shadow-xs"
+            >
+              {isRTL ? <ArrowRight size={15} /> : <ArrowLeft size={15} />}
+              <span>{language === 'ar' ? 'العودة إلى اختيار الأقسام' : 'Back to Sections'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={onBackToHome}
+              className="px-4 py-2.5 min-h-[44px] rounded-xl text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 transition-colors cursor-pointer"
+            >
+              {language === 'ar' ? 'شاشة الترحيب' : 'Welcome'}
+            </button>
           </div>
         </div>
       </div>
@@ -957,12 +1076,34 @@ export const PortalShellView: React.FC<PortalShellViewProps> = ({
         </div>
       )}
 
-      {/* Provider Subscription & Manual Wallet Checkout Modal */}
-      <SubscriptionPaymentModal
-        isOpen={showCheckoutModal}
-        onClose={() => setShowCheckoutModal(false)}
-        plan={null}
-      />
+      {/* Lazy-Loaded Provider Subscription & Manual Wallet Checkout Modal */}
+      {showCheckoutModal && (
+        <React.Suspense fallback={null}>
+          <SubscriptionPaymentModal
+            isOpen={showCheckoutModal}
+            onClose={() => setShowCheckoutModal(false)}
+            plan={null}
+          />
+        </React.Suspense>
+      )}
+
+      {/* Lazy-Loaded Official Support Center Modal (Accessible inside every portal) */}
+      {showSupportModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/65 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5 print:hidden">
+          <div className="w-full max-w-5xl">
+            <React.Suspense fallback={null}>
+              <OfficialSupportCenter
+                variant="modal"
+                defaultOpenForm={true}
+                portalId={portal.id}
+                portalTitleAr={portal.titleAr}
+                portalTitleEn={portal.titleEn}
+                onClose={() => setShowSupportModal(false)}
+              />
+            </React.Suspense>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

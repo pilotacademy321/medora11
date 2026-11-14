@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { UserRole } from '../types';
+import { isPortalSuspended, isRoleSuspended } from '../config/portalsConfig';
 import { calculateAgeFromDob, hasValidPhoneNumber } from '../utils/patientSearch';
 import { 
   User, 
@@ -45,9 +46,9 @@ export const OnboardingModal: React.FC = () => {
     const path = window.location.pathname.toLowerCase();
     if (path.includes('doctor')) return { type: 'professional', role: 'doctor', portalNameAr: 'بوابة الطبيب' };
     if (path.includes('laboratory') || path.includes('lab')) return { type: 'professional', role: 'laboratory', portalNameAr: 'بوابة المختبرات الطبية' };
-    if (path.includes('radiology') || path.includes('xray')) return { type: 'professional', role: 'radiology_center', portalNameAr: 'بوابة الأشعة والسونار' };
+    if (!isPortalSuspended('radiology') && (path.includes('radiology') || path.includes('xray'))) return { type: 'professional', role: 'radiology_center', portalNameAr: 'بوابة الأشعة والسونار' };
     if (path.includes('pharmacy')) return { type: 'professional', role: 'pharmacy', portalNameAr: 'بوابة الصيدلية' };
-    if (path.includes('wholesaler')) return { type: 'professional', role: 'wholesaler', portalNameAr: 'بوابة مجهزي الأدوية بالجملة' };
+    if (!isPortalSuspended('wholesaler') && path.includes('wholesaler')) return { type: 'professional', role: 'wholesaler', portalNameAr: 'بوابة مجهزي الأدوية بالجملة' };
     if (path.includes('secretary')) return { type: 'professional', role: 'secretary', portalNameAr: 'بوابة السكرتارية' };
     if (path.includes('patient')) return { type: 'patient', role: 'doctor', portalNameAr: 'بوابة المريض' };
     return { type: 'patient', role: 'doctor' };
@@ -261,7 +262,7 @@ export const OnboardingModal: React.FC = () => {
                   </div>
                   <p className="text-xs text-slate-500 mt-1">
                     {language === 'ar'
-                      ? 'للمواطنين لحجز المواعيد واستعراض نتائج التحاليل والأشعة والتواصل مع الأطباء.'
+                      ? 'للمواطنين لحجز المواعيد واستعراض نتائج التحاليل والتواصل مع الأطباء.'
                       : 'For patients booking appointments, managing records, and consulting doctors.'}
                   </p>
                 </div>
@@ -288,8 +289,8 @@ export const OnboardingModal: React.FC = () => {
                   </div>
                   <p className="text-xs text-slate-500 mt-1">
                     {language === 'ar'
-                      ? 'للأطباء والمختبرات ومراكز الأشعة والصيدليات والكوادر الطبية والإدارية.'
-                      : 'For doctors, clinical labs, radiology centers, pharmacies, and coordinators.'}
+                      ? 'للأطباء والمختبرات والصيدليات والكوادر الطبية والإدارية.'
+                      : 'For doctors, clinical labs, pharmacies, and coordinators.'}
                   </p>
                 </div>
               </button>
@@ -302,7 +303,7 @@ export const OnboardingModal: React.FC = () => {
               <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
                 {language === 'ar' ? 'اختر التخصص / القطاع الصحي:' : 'Select Healthcare Specialization:'}
               </label>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                 {[
                   { role: 'doctor' as UserRole, labelAr: 'طبيب اختصاص', labelEn: 'Medical Doctor', icon: Stethoscope, color: 'text-red-600' },
                   { role: 'radiology_center' as UserRole, labelAr: 'مركز أشعة وسونار', labelEn: 'Radiology Center', icon: Scan, color: 'text-cyan-600' },
@@ -310,7 +311,9 @@ export const OnboardingModal: React.FC = () => {
                   { role: 'pharmacy' as UserRole, labelAr: 'صيدلية أهلية', labelEn: 'Pharmacy', icon: Pill, color: 'text-emerald-600' },
                   { role: 'wholesaler' as UserRole, labelAr: 'مذخر / مجهز أدوية', labelEn: 'Drug Warehouse', icon: Building2, color: 'text-teal-600' },
                   { role: 'secretary' as UserRole, labelAr: 'سكرتير / استقبال', labelEn: 'Clinic Secretary', icon: Users, color: 'text-blue-600' },
-                ].map((item) => {
+                ]
+                  .filter((item) => !isRoleSuspended(item.role))
+                  .map((item) => {
                   const Icon = item.icon;
                   const isChosen = selectedRole === item.role;
                   return (
